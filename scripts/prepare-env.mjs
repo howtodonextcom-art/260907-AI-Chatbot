@@ -14,6 +14,7 @@ if (existsSync(envLocalPath)) {
 
 let gemini = "";
 let groq = "";
+let deepseek = "";
 
 if (existsSync(legacyPath)) {
   const raw = readFileSync(legacyPath, "utf8");
@@ -22,6 +23,8 @@ if (existsSync(legacyPath)) {
     const v = rest.join("=").trim();
     if (k.trim() === "Gemini_API" || k.trim() === "GEMINI_API_KEY") gemini = v;
     if (k.trim() === "Groq_API" || k.trim() === "GROQ_API_KEY") groq = v;
+    if (k.trim() === "DeepSeek_API" || k.trim() === "DEEPSEEK_API_KEY")
+      deepseek = v;
   }
 }
 
@@ -43,6 +46,7 @@ ENABLE_CHALLENGEREADY_PACK=true
 
 GEMINI_API_KEY=${gemini}
 GROQ_API_KEY=${groq}
+DEEPSEEK_API_KEY=${deepseek}
 
 # Fill Firebase public values from console when ready
 NEXT_PUBLIC_FIREBASE_API_KEY=

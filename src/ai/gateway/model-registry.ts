@@ -19,6 +19,14 @@ const GROQ_CAPS: ModelCapabilities = {
   maxContextTokens: 128000,
 };
 
+const DEEPSEEK_CAPS: ModelCapabilities = {
+  structuredOutput: true,
+  tools: false,
+  streaming: true,
+  vision: false,
+  maxContextTokens: 128000,
+};
+
 export const MODEL_REGISTRY: ModelRegistryEntry[] = [
   {
     provider: "gemini",
@@ -37,6 +45,16 @@ export const MODEL_REGISTRY: ModelRegistryEntry[] = [
     enabled: true,
     routingTags: ["quick", "critic", "economy"],
     pricing: { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  },
+  {
+    provider: "deepseek",
+    // OpenAI-compatible Chat Completions; deepseek-chat aliases non-thinking flash.
+    model: "deepseek-chat",
+    capabilities: DEEPSEEK_CAPS,
+    enabled: true,
+    routingTags: ["fallback", "economy", "deepseek"],
+    // Estimate: cache-miss list rates for deepseek-chat / V4-Flash alias.
+    pricing: { inputPerMillion: 0.14, outputPerMillion: 0.28 },
   },
 ];
 

@@ -4,13 +4,14 @@ import type {
   ModelResult,
   NormalizedModelRequest,
 } from "@/ai/gateway/model-provider";
+import { DeepSeekProvider } from "@/ai/providers/deepseek-provider";
 import { GeminiProvider } from "@/ai/providers/gemini-provider";
 import { GroqProvider } from "@/ai/providers/groq-provider";
 import { AppError } from "@/infrastructure/api/errors";
 import { logStructured } from "@/infrastructure/logging/logger";
 import type { AgentRole, RouteMode } from "@/domain/decision/types";
 
-export type PreferredProvider = "gemini" | "groq";
+export type PreferredProvider = "gemini" | "groq" | "deepseek";
 
 export function resolveProviderForRole(
   role: AgentRole,
@@ -19,6 +20,12 @@ export function resolveProviderForRole(
   if (routeMode === "QUICK") return "groq";
   if (role === "CRITIC") return "groq";
   return "gemini";
+}
+
+export function fallbackOrder(preferred: PreferredProvider): PreferredProvider[] {
+  if (preferred === "gemini") return ["gemini", "groq", "deepseek"];
+  if (preferred === "groq") return ["groq", "gemini", "deepseek"];
+  return ["deepseek", "groq", "gemini"];
 }
 
 export class ModelGateway {
@@ -32,6 +39,7 @@ export class ModelGateway {
     const env = getServerEnv();
     if (env.hasGemini) this.providers.set("gemini", new GeminiProvider());
     if (env.hasGroq) this.providers.set("groq", new GroqProvider());
+    if (env.hasDeepseek) this.providers.set("deepseek", new DeepSeekProvider());
   }
 
   getProvider(id: string): ModelProvider {
@@ -55,8 +63,7 @@ export class ModelGateway {
     request: NormalizedModelRequest,
     options?: { allowFallback?: boolean }
   ): Promise<ModelResult<T>> {
-    const order: PreferredProvider[] =
-      preferred === "gemini" ? ["gemini", "groq"] : ["groq", "gemini"];
+    const order = fallbackOrder(preferred);
     const candidates = options?.allowFallback === false ? [preferred] : order;
 
     let lastError: unknown;

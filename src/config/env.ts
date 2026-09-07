@@ -30,6 +30,7 @@ const serverEnvSchema = z.object({
 
   GEMINI_API_KEY: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),
+  DEEPSEEK_API_KEY: z.string().optional(),
 
   USE_MEMORY_STORE: boolFromEnv,
   DEV_AUTH_BYPASS: boolFromEnv,
@@ -50,6 +51,7 @@ export type ServerEnv = z.infer<typeof serverEnvSchema> & {
   hasFirebaseClient: boolean;
   hasGemini: boolean;
   hasGroq: boolean;
+  hasDeepseek: boolean;
   firebaseAdminCredentialsPath: string | null;
   connectedMode: boolean;
 };
@@ -118,6 +120,7 @@ export function getServerEnv(): ServerEnv {
     hasFirebaseClient,
     hasGemini: Boolean(data.GEMINI_API_KEY),
     hasGroq: Boolean(data.GROQ_API_KEY),
+    hasDeepseek: Boolean(data.DEEPSEEK_API_KEY),
     firebaseAdminCredentialsPath,
     connectedMode,
   };

@@ -78,6 +78,7 @@ async function main() {
         projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || null,
         hasGemini: Boolean(process.env.GEMINI_API_KEY),
         hasGroq: Boolean(process.env.GROQ_API_KEY),
+        hasDeepseek: Boolean(process.env.DEEPSEEK_API_KEY),
       },
       null,
       2

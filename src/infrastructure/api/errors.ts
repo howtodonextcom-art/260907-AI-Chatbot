@@ -61,7 +61,7 @@ export function humanizeProviderError(raw: unknown): string {
     lower.includes("not configured") ||
     lower.includes("no ai providers")
   ) {
-    return "Thiếu hoặc sai API key (GEMINI_API_KEY / GROQ_API_KEY). Kiểm tra .env.local rồi khởi động lại server.";
+    return "Thiếu hoặc sai API key (GEMINI_API_KEY / GROQ_API_KEY / DEEPSEEK_API_KEY). Kiểm tra .env.local rồi khởi động lại server.";
   }
   if (
     lower.includes("model_not_found") ||

@@ -42,7 +42,7 @@ Copy `.env.example` → `.env.local`. Never commit secrets (`.env.local`, `servi
 
 | Variable | Notes |
 |---|---|
-| `GEMINI_API_KEY` / `GROQ_API_KEY` | Server only |
+| `GEMINI_API_KEY` / `GROQ_API_KEY` / `DEEPSEEK_API_KEY` | Server only |
 | `NEXT_PUBLIC_FIREBASE_*` | Client Firebase config |
 | `FIREBASE_ADMIN_CREDENTIALS_PATH` / `GOOGLE_APPLICATION_CREDENTIALS` | Preferred Admin path to gitignored `service.json` |
 | `FIREBASE_ADMIN_PROJECT_ID` / `CLIENT_EMAIL` / `PRIVATE_KEY` | Fallback Admin cert (avoid committing) |
