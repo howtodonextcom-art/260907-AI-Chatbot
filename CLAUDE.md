@@ -19,6 +19,20 @@ GIT_COMMITTER_EMAIL="howtodonext.com@gmail.com"
 - Remote: `https://github.com/howtodonextcom-art/260907-AI-Chatbot.git`
 - Không commit secrets: `.env.local`, `env.local`, `service.json`, private keys.
 
+## Đặt tên artifact trong `reports/`
+
+Khi ghi báo cáo QA, audit, hoặc artifact vận hành tương tự vào thư mục `reports/`, dùng đúng pattern:
+
+```text
+yy-mm-dd-HH-mm-ten-tinh-nang.md
+```
+
+- **yy-mm-dd**: năm 2 chữ số, tháng, ngày
+- **HH-mm**: giờ 24h và phút theo giờ máy người vận hành (**UTC+7** trừ khi ghi chú khác)
+- **ten-tinh-nang**: slug kebab-case ASCII thường, không khoảng trắng, không secrets trong tên
+- **Ví dụ chuẩn:** `26-09-07-23-49-kiem-thu-e2e-ftmo-decision-session.md`
+- Chỉ áp dụng cho artifact mới trong `reports/`. File cũ dạng marketing title (vd. `FINAL-VERIFIED-100-AUDIT-v10.md`) có thể giữ nguyên — không dùng làm pattern canonical về sau.
+
 ## Nợ kỹ thuật (từ phiên thực thi MASTER-CODING-PROMPT, 2026-09-07)
 
 - **Firestore rules/indexes chưa deploy lên project thật (`chatai-62ca2`).**
