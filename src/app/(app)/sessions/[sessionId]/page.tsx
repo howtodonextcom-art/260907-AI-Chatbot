@@ -277,6 +277,21 @@ export default function SessionPage() {
     }
   }
 
+  async function approveBlueprint() {
+    try {
+      const data = await apiFetch<{ blueprint: Blueprint }>(
+        `/api/sessions/${sessionId}/blueprint`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ approve: true }),
+        }
+      );
+      setBlueprint(data.blueprint);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Duyệt blueprint thất bại");
+    }
+  }
+
   if (!session) {
     return <LoadingBlock label="Đang tải Decision Session…" />;
   }
@@ -384,6 +399,7 @@ export default function SessionPage() {
             blueprint={blueprint}
             onApproveDecision={approveDecision}
             onGenerateBlueprint={generateBlueprint}
+            onApproveBlueprint={approveBlueprint}
           />
         </div>
       </div>

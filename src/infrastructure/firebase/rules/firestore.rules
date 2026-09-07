@@ -16,9 +16,19 @@ service cloud.firestore {
       allow delete: if false;
 
       match /sessions/{sessionId} {
-        allow read, update: if isOwner(resource.data.ownerId);
+        allow read: if isOwner(resource.data.ownerId);
         allow create: if request.auth != null
           && request.resource.data.ownerId == request.auth.uid;
+        // DECIDED must only ever be written by the server (Admin SDK,
+        // which bypasses these rules) after HardPolicyGate + DecisionRecord
+        // creation. judgeDraft/activeDecisionRecordId/activeBlueprintId are
+        // server-controlled and must never be set by a client write.
+        allow update: if isOwner(resource.data.ownerId)
+          && request.resource.data.ownerId == resource.data.ownerId
+          && request.resource.data.workspaceId == resource.data.workspaceId
+          && request.resource.data.status != 'DECIDED'
+          && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['judgeDraft', 'activeDecisionRecordId', 'activeBlueprintId']);
         allow delete: if false;
 
         match /messages/{messageId} {

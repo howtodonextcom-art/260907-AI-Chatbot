@@ -41,28 +41,6 @@ export default function LoginPage() {
       await action(auth);
     } catch (e) {
       const mapped = mapFirebaseAuthError(e);
-      const code =
-        typeof e === "object" && e && "code" in e
-          ? String((e as { code: string }).code)
-          : "unknown";
-      // #region agent log
-      fetch("http://127.0.0.1:7577/ingest/0ef3d92a-0efa-4ea4-af96-ee377e9604cb", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "166647",
-        },
-        body: JSON.stringify({
-          sessionId: "166647",
-          runId: "post-fix",
-          hypothesisId: "F",
-          location: "src/app/(auth)/login/page.tsx",
-          message: "auth attempt failed",
-          data: { mode, code, mapped: mapped.slice(0, 120) },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       setError(mapped);
     } finally {
       setBusy(null);

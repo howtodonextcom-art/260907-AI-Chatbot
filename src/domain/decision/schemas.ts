@@ -7,71 +7,11 @@ export const CreateSessionSchema = z.object({
   domainPackId: z.string().optional(),
 });
 
-export const UpdateSessionSchema = z.object({
-  title: z.string().min(1).max(160).optional(),
-  problem: z.string().min(1).max(10000).optional(),
-  objective: z.string().max(5000).optional(),
-  status: z
-    .enum([
-      "DISCOVERY",
-      "VALIDATING",
-      "DECISION_READY",
-      "DECIDED",
-      "ARCHIVED",
-    ])
-    .optional(),
-  domainPackId: z.string().optional(),
-  latestSummary: z.string().optional(),
-  constraints: z.array(z.unknown()).optional(),
-  assumptions: z.array(z.unknown()).optional(),
-  unknowns: z.array(z.unknown()).optional(),
-  options: z.array(z.unknown()).optional(),
-  criteria: z.array(z.unknown()).optional(),
-});
-
-export const CreateMessageSchema = z.object({
-  content: z.string().min(1).max(20000),
-});
-
-export const RunSessionSchema = z.object({
-  routeMode: z.enum(["QUICK", "STANDARD", "DEEP"]),
-  intent: z.enum([
-    "DISCUSS",
-    "FRAME_PROBLEM",
-    "GENERATE_OPTIONS",
-    "CRITIQUE",
-    "VERIFY",
-    "PREPARE_DECISION",
-  ]),
-  messageId: z.string().optional(),
-});
-
-export const ApproveDecisionSchema = z.object({
-  judgeRunId: z.string(),
-  approve: z.literal(true),
-});
-
-export const CreateBlueprintSchema = z.object({
-  sourceDecisionRecordId: z.string(),
-});
-
-export const CreateEvidenceSchema = z.object({
-  type: z.enum([
-    "SOURCE_CODE",
-    "OFFICIAL_DOCUMENTATION",
-    "WEB_SOURCE",
-    "USER_FACT",
-    "USER_CLAIM",
-    "CALCULATION",
-    "EXPERIMENT",
-    "AI_INFERENCE",
-  ]),
-  claim: z.string().min(1).max(5000),
-  source: z.string().max(2000).optional(),
-  reliability: z.enum(["HIGH", "MEDIUM", "LOW"]).optional(),
-  supportsOptionIds: z.array(z.string()).default([]),
-  contradictsOptionIds: z.array(z.string()).default([]),
-  metadata: z.record(z.unknown()).optional(),
+export const ConstraintSchema = z.object({
+  id: z.string(),
+  statement: z.string(),
+  source: z.enum(["USER", "SYSTEM", "DOMAIN_PACK", "AI"]),
+  confirmedByUser: z.boolean(),
 });
 
 export const CriterionSchema = z.object({
@@ -121,6 +61,77 @@ export const UnknownSchema = z.object({
     "RESOLVED",
   ]),
   evidenceIds: z.array(z.string()),
+});
+
+/**
+ * DECIDED is intentionally excluded here. It may only be assigned by
+ * approveDecision() after HardPolicyGate passes (POST /api/sessions/:id/decision).
+ * Allowing it through this generic PATCH would let a client skip JudgeDraft,
+ * HardPolicyGate and DecisionRecord creation entirely.
+ */
+export const UpdateSessionSchema = z.object({
+  title: z.string().min(1).max(160).optional(),
+  problem: z.string().min(1).max(10000).optional(),
+  objective: z.string().max(5000).optional(),
+  status: z
+    .enum(["DISCOVERY", "VALIDATING", "DECISION_READY", "ARCHIVED"])
+    .optional(),
+  domainPackId: z.string().optional(),
+  latestSummary: z.string().optional(),
+  constraints: z.array(ConstraintSchema).optional(),
+  assumptions: z.array(AssumptionSchema).optional(),
+  unknowns: z.array(UnknownSchema).optional(),
+  options: z.array(OptionSchema).optional(),
+  criteria: z.array(CriterionSchema).optional(),
+});
+
+export const CreateMessageSchema = z.object({
+  content: z.string().min(1).max(20000),
+});
+
+export const RunSessionSchema = z.object({
+  routeMode: z.enum(["QUICK", "STANDARD", "DEEP"]),
+  intent: z.enum([
+    "DISCUSS",
+    "FRAME_PROBLEM",
+    "GENERATE_OPTIONS",
+    "CRITIQUE",
+    "VERIFY",
+    "PREPARE_DECISION",
+  ]),
+  messageId: z.string().optional(),
+});
+
+export const ApproveDecisionSchema = z.object({
+  judgeRunId: z.string(),
+  approve: z.literal(true),
+});
+
+export const CreateBlueprintSchema = z.object({
+  sourceDecisionRecordId: z.string(),
+});
+
+export const ApproveBlueprintSchema = z.object({
+  approve: z.literal(true),
+});
+
+export const CreateEvidenceSchema = z.object({
+  type: z.enum([
+    "SOURCE_CODE",
+    "OFFICIAL_DOCUMENTATION",
+    "WEB_SOURCE",
+    "USER_FACT",
+    "USER_CLAIM",
+    "CALCULATION",
+    "EXPERIMENT",
+    "AI_INFERENCE",
+  ]),
+  claim: z.string().min(1).max(5000),
+  source: z.string().max(2000).optional(),
+  reliability: z.enum(["HIGH", "MEDIUM", "LOW"]).optional(),
+  supportsOptionIds: z.array(z.string()).default([]),
+  contradictsOptionIds: z.array(z.string()).default([]),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 export function validateCriteriaWeights(

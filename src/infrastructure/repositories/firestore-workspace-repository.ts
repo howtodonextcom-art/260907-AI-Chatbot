@@ -24,38 +24,12 @@ export class FirestoreWorkspaceRepository implements WorkspaceRepository {
   }
 
   async listByOwner(ownerId: string): Promise<Workspace[]> {
-    try {
-      const snap = await this.col()
-        .where("ownerId", "==", ownerId)
-        .where("status", "==", "ACTIVE")
-        .orderBy("updatedAt", "desc")
-        .get();
-      return snap.docs.map((d) => ({ ...(d.data() as Workspace), id: d.id }));
-    } catch (error) {
-      const err = error as { code?: number | string; message?: string };
-      // #region agent log
-      fetch("http://127.0.0.1:7577/ingest/0ef3d92a-0efa-4ea4-af96-ee377e9604cb", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "166647",
-        },
-        body: JSON.stringify({
-          sessionId: "166647",
-          runId: "pre-fix",
-          hypothesisId: "A",
-          location: "firestore-workspace-repository.ts:listByOwner",
-          message: "Firestore listByOwner threw",
-          data: {
-            code: err?.code,
-            msg: String(err?.message ?? error).slice(0, 280),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      throw error;
-    }
+    const snap = await this.col()
+      .where("ownerId", "==", ownerId)
+      .where("status", "==", "ACTIVE")
+      .orderBy("updatedAt", "desc")
+      .get();
+    return snap.docs.map((d) => ({ ...(d.data() as Workspace), id: d.id }));
   }
 
   async update(

@@ -17,8 +17,10 @@ export class FirestoreDecisionRecordRepository
     return getAdminDb().collection("decisionRecords");
   }
 
-  async create(input: Omit<DecisionRecord, "id">): Promise<DecisionRecord> {
-    const ref = this.col().doc();
+  async create(
+    input: Omit<DecisionRecord, "id"> & { id?: string }
+  ): Promise<DecisionRecord> {
+    const ref = input.id ? this.col().doc(input.id) : this.col().doc();
     const record: DecisionRecord = { ...input, id: ref.id };
     await ref.set(record);
     return record;
@@ -53,8 +55,10 @@ export class FirestoreBlueprintRepository implements BlueprintRepository {
     return getAdminDb().collection("blueprints");
   }
 
-  async create(input: Omit<Blueprint, "id">): Promise<Blueprint> {
-    const ref = this.col().doc();
+  async create(
+    input: Omit<Blueprint, "id"> & { id?: string }
+  ): Promise<Blueprint> {
+    const ref = input.id ? this.col().doc(input.id) : this.col().doc();
     const bp: Blueprint = { ...input, id: ref.id };
     await ref.set(bp);
     return bp;
@@ -147,6 +151,28 @@ export class FirestoreIdempotencyStore implements IdempotencyStore {
       artifactId,
       createdAt: new Date().toISOString(),
     });
+  }
+
+  async claim(
+    key: string,
+    artifactId: string
+  ): Promise<{ won: boolean; artifactId: string }> {
+    const ref = getAdminDb().collection("idempotency").doc(key);
+    try {
+      // create() fails atomically if the doc already exists — no
+      // read-then-write window like get()+set() has.
+      await ref.create({ artifactId, createdAt: new Date().toISOString() });
+      return { won: true, artifactId };
+    } catch (error) {
+      const err = error as { code?: number };
+      if (err.code === 6 /* ALREADY_EXISTS */) {
+        const snap = await ref.get();
+        const existing = (snap.data() as { artifactId: string } | undefined)
+          ?.artifactId;
+        if (existing) return { won: false, artifactId: existing };
+      }
+      throw error;
+    }
   }
 }
 

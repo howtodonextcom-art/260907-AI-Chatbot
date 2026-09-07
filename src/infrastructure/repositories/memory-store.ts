@@ -293,8 +293,10 @@ export class MemoryDecisionRecordRepository
 {
   constructor(private readonly db = getMemoryDb()) {}
 
-  async create(input: Omit<DecisionRecord, "id">): Promise<DecisionRecord> {
-    const record: DecisionRecord = { ...input, id: uuidv4() };
+  async create(
+    input: Omit<DecisionRecord, "id"> & { id?: string }
+  ): Promise<DecisionRecord> {
+    const record: DecisionRecord = { ...input, id: input.id ?? uuidv4() };
     this.db.decisionRecords.set(record.id, record);
     return record;
   }
@@ -319,8 +321,10 @@ export class MemoryDecisionRecordRepository
 export class MemoryBlueprintRepository implements BlueprintRepository {
   constructor(private readonly db = getMemoryDb()) {}
 
-  async create(input: Omit<Blueprint, "id">): Promise<Blueprint> {
-    const bp: Blueprint = { ...input, id: uuidv4() };
+  async create(
+    input: Omit<Blueprint, "id"> & { id?: string }
+  ): Promise<Blueprint> {
+    const bp: Blueprint = { ...input, id: input.id ?? uuidv4() };
     this.db.blueprints.set(bp.id, bp);
     return bp;
   }
@@ -387,6 +391,15 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
   }
   async set(key: string, artifactId: string): Promise<void> {
     this.db.idempotency.set(key, artifactId);
+  }
+  async claim(
+    key: string,
+    artifactId: string
+  ): Promise<{ won: boolean; artifactId: string }> {
+    const existing = this.db.idempotency.get(key);
+    if (existing) return { won: false, artifactId: existing };
+    this.db.idempotency.set(key, artifactId);
+    return { won: true, artifactId };
   }
 }
 

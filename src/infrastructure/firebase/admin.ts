@@ -72,41 +72,42 @@ export function getAdminAuth(): Auth {
   return admin.auth();
 }
 
+let firestoreSettingsApplied = false;
+
 export function getAdminDb(): Firestore {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const admin = require("firebase-admin") as typeof import("firebase-admin");
-  try {
-    getAdminApp();
-    return admin.firestore();
-  } catch (error) {
-    const err = error as { message?: string };
-    // #region agent log
-    fetch("http://127.0.0.1:7577/ingest/0ef3d92a-0efa-4ea4-af96-ee377e9604cb", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "166647",
-      },
-      body: JSON.stringify({
-        sessionId: "166647",
-        runId: "pre-fix",
-        hypothesisId: "C",
-        location: "src/infrastructure/firebase/admin.ts:getAdminDb",
-        message: "getAdminDb failed",
-        data: { msg: String(err?.message ?? error).slice(0, 200) },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-    throw error;
+  getAdminApp();
+  const db = admin.firestore();
+  if (!firestoreSettingsApplied) {
+    // Optional fields (e.g. Workspace.description, DecisionSession.objective)
+    // are `undefined` when absent — Firestore rejects that by default.
+    db.settings({ ignoreUndefinedProperties: true });
+    firestoreSettingsApplied = true;
   }
+  return db;
 }
 
+/**
+ * Verifies a Firebase Auth ID token. Uses Google's public signing certs
+ * directly, so it works without a service account (service.json) — the
+ * Admin SDK above is only needed for Firestore access.
+ */
 export async function verifyIdToken(token: string) {
-  return getAdminAuth().verifyIdToken(token);
+  const env = getServerEnv();
+  const projectId =
+    env.FIREBASE_ADMIN_PROJECT_ID || env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  if (!projectId) {
+    throw new Error("Firebase project id is not configured");
+  }
+  const { verifyFirebaseIdToken } = await import(
+    "@/infrastructure/firebase/verify-id-token"
+  );
+  return verifyFirebaseIdToken(token, projectId);
 }
 
 /** Test helper — clears cached Admin app (does not delete firebase-admin apps). */
 export function resetAdminAppCache(): void {
   app = null;
+  firestoreSettingsApplied = false;
 }

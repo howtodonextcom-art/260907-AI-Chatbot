@@ -44,30 +44,7 @@ export async function requireAuth(
   try {
     const decoded = await verifyIdToken(token);
     return { uid: decoded.uid, email: decoded.email };
-  } catch (error) {
-    const err = error as { code?: string; message?: string };
-    // #region agent log
-    fetch("http://127.0.0.1:7577/ingest/0ef3d92a-0efa-4ea4-af96-ee377e9604cb", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "166647",
-      },
-      body: JSON.stringify({
-        sessionId: "166647",
-        runId: "pre-fix",
-        hypothesisId: "B",
-        location: "src/infrastructure/api/auth.ts:verifyIdToken",
-        message: "verifyIdToken failed",
-        data: {
-          code: err?.code,
-          msg: String(err?.message ?? error).slice(0, 200),
-          tokenLen: token.length,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
+  } catch {
     throw new AppError("UNAUTHORIZED", "Invalid authentication token", 401);
   }
 }

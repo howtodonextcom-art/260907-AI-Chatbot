@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { apiFetch, getAuthToken } from "@/features/workspace/api-client";
+import {
+  apiFetch,
+  clearAuthToken,
+  getAuthToken,
+} from "@/features/workspace/api-client";
+import { getClientAuth } from "@/infrastructure/firebase/client";
 import type { Workspace } from "@/domain/workspace/types";
 import { LabMark } from "@/components/ui/LabMark";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -20,13 +25,13 @@ export default function WorkspacesPage() {
   const [creating, setCreating] = useState(false);
 
   async function load() {
+    if (!getAuthToken()) {
+      router.push("/login");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      if (!getAuthToken()) {
-        router.push("/login");
-        return;
-      }
       const data = await apiFetch<{ workspaces: Workspace[] }>("/api/workspaces");
       setWorkspaces(data.workspaces);
     } catch (e) {
@@ -40,6 +45,19 @@ export default function WorkspacesPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleLogout() {
+    try {
+      const auth = await getClientAuth();
+      if (auth) {
+        const { signOut } = await import("firebase/auth");
+        await signOut(auth);
+      }
+    } finally {
+      clearAuthToken();
+      router.push("/login");
+    }
+  }
 
   async function createWorkspace(e: React.FormEvent) {
     e.preventDefault();
@@ -77,13 +95,14 @@ export default function WorkspacesPage() {
             </p>
           </div>
         </div>
-        <Link
-          href="/login"
+        <button
+          type="button"
+          onClick={() => void handleLogout()}
           className="text-sm"
           style={{ color: "var(--text-muted)" }}
         >
-          Tài khoản
-        </Link>
+          Đăng xuất
+        </button>
       </header>
 
       <section className="mb-10" aria-labelledby="ws-list-heading">

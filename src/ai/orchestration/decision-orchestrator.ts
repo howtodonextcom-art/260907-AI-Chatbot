@@ -22,7 +22,10 @@ import type {
 } from "@/domain/decision/types";
 import type { Repositories } from "@/infrastructure/repositories";
 import { logStructured } from "@/infrastructure/logging/logger";
-import { canTransition } from "@/domain/decision/state-machine";
+import {
+  canEnterDecisionReady,
+  canTransition,
+} from "@/domain/decision/state-machine";
 import { AppError, humanizeProviderError } from "@/infrastructure/api/errors";
 import { parseLooseJson } from "@/ai/agents/schemas";
 
@@ -505,8 +508,25 @@ export async function* runDecisionOrchestrator(args: {
             confidenceScore: judge.structured.confidenceScore,
           };
           sessionPatch.judgeDraft = judgeDraft;
+          const mergedOptions = sessionPatch.options ?? args.session.options;
+          const mergedAssumptions =
+            sessionPatch.assumptions ?? args.session.assumptions;
+          const mergedUnknowns =
+            sessionPatch.unknowns ?? args.session.unknowns;
+          const highPriorityOpenUnknowns = mergedUnknowns.filter(
+            (u) => u.importance === "HIGH" && u.resolution === "OPEN"
+          ).length;
+          const ready = canEnterDecisionReady({
+            optionCount: mergedOptions.length,
+            assumptionCount: mergedAssumptions.length,
+            highPriorityOpenUnknowns,
+            // domainChecks already gated this run at entry (see above); no
+            // additional domain validation errors can exist at this point.
+            domainValidationErrors: [],
+          });
           if (
             judge.structured.decision !== "INSUFFICIENT_EVIDENCE" &&
+            ready &&
             canTransition(
               sessionPatch.status ?? args.session.status,
               "DECISION_READY"
@@ -752,11 +772,12 @@ export async function approveDecision(args: {
     "@/domain/decision/confidence"
   );
   const domainPack = getDomainPack(args.session.domainPackId);
+  const idempotencyKey = args.idempotencyKey
+    ? `${args.ownerId}:decision:${args.idempotencyKey}`
+    : undefined;
 
-  if (args.idempotencyKey) {
-    const existingId = await args.repos.idempotency.get(
-      `${args.ownerId}:decision:${args.idempotencyKey}`
-    );
+  if (idempotencyKey) {
+    const existingId = await args.repos.idempotency.get(idempotencyKey);
     if (existingId) {
       const existing = await args.repos.decisionRecords.getById(
         existingId,
@@ -852,8 +873,38 @@ export async function approveDecision(args: {
 
   const { id: _omitId, ...provisionalWithoutId } = provisional;
   void _omitId;
+
+  let recordId: string | undefined;
+  if (idempotencyKey) {
+    const candidateId = uuidv4();
+    const claim = await args.repos.idempotency.claim(
+      idempotencyKey,
+      candidateId
+    );
+    if (claim.won) {
+      recordId = candidateId;
+    } else {
+      // Another concurrent request already won this key — return its
+      // record instead of creating a duplicate DecisionRecord.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const winner = await args.repos.decisionRecords.getById(
+          claim.artifactId,
+          args.ownerId
+        );
+        if (winner) return winner;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      throw new AppError(
+        "IDEMPOTENCY_CONFLICT",
+        "Concurrent decision approval in progress; retry with the same key",
+        409
+      );
+    }
+  }
+
   const record = await args.repos.decisionRecords.create({
     ...provisionalWithoutId,
+    id: recordId,
     confidence,
     supersedesDecisionRecordId: previous?.id,
   });
@@ -868,13 +919,6 @@ export async function approveDecision(args: {
     }
   );
 
-  if (args.idempotencyKey) {
-    await args.repos.idempotency.set(
-      `${args.ownerId}:decision:${args.idempotencyKey}`,
-      record.id
-    );
-  }
-
   return record;
 }
 
@@ -886,11 +930,12 @@ export async function createBlueprintFromDecision(args: {
   idempotencyKey?: string;
 }) {
   const { gateBlueprintCreation } = await import("@/ai/safety/hard-policy-gate");
+  const idempotencyKey = args.idempotencyKey
+    ? `${args.ownerId}:blueprint:${args.idempotencyKey}`
+    : undefined;
 
-  if (args.idempotencyKey) {
-    const existingId = await args.repos.idempotency.get(
-      `${args.ownerId}:blueprint:${args.idempotencyKey}`
-    );
+  if (idempotencyKey) {
+    const existingId = await args.repos.idempotency.get(idempotencyKey);
     if (existingId) {
       const existing = await args.repos.blueprints.getById(
         existingId,
@@ -917,12 +962,39 @@ export async function createBlueprintFromDecision(args: {
     (o) => o.id === decision.selectedOptionId
   );
 
+  let blueprintId: string | undefined;
+  if (idempotencyKey) {
+    const candidateId = uuidv4();
+    const claim = await args.repos.idempotency.claim(
+      idempotencyKey,
+      candidateId
+    );
+    if (claim.won) {
+      blueprintId = candidateId;
+    } else {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const winner = await args.repos.blueprints.getById(
+          claim.artifactId,
+          args.ownerId
+        );
+        if (winner) return winner;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      throw new AppError(
+        "IDEMPOTENCY_CONFLICT",
+        "Concurrent blueprint generation in progress; retry with the same key",
+        409
+      );
+    }
+  }
+
   const blueprint = await args.repos.blueprints.create({
+    id: blueprintId,
     workspaceId: args.session.workspaceId,
     sessionId: args.session.id,
     ownerId: args.ownerId,
     sourceDecisionRecordId: decision.id,
-    status: "APPROVED",
+    status: "DRAFT",
     title: `Blueprint: ${args.session.title}`,
     projectGoal: args.session.objective ?? args.session.title,
     problem: args.session.problem,
@@ -988,7 +1060,6 @@ export async function createBlueprintFromDecision(args: {
     openRisks: decision.tradeoffs,
     decisionReferences: [decision.id, ...decision.rationale.slice(0, 3)],
     createdAt: new Date().toISOString(),
-    approvedAt: new Date().toISOString(),
   });
 
   await args.repos.sessions.update(
@@ -998,12 +1069,40 @@ export async function createBlueprintFromDecision(args: {
     { activeBlueprintId: blueprint.id }
   );
 
-  if (args.idempotencyKey) {
-    await args.repos.idempotency.set(
-      `${args.ownerId}:blueprint:${args.idempotencyKey}`,
-      blueprint.id
+  return blueprint;
+}
+
+/**
+ * Blueprint starts DRAFT (see createBlueprintFromDecision) and can only
+ * reach APPROVED through this explicit, human-triggered transition — never
+ * automatically at creation time.
+ */
+export async function approveBlueprint(args: {
+  repos: Repositories;
+  blueprintId: string;
+  ownerId: string;
+}) {
+  const blueprint = await args.repos.blueprints.getById(
+    args.blueprintId,
+    args.ownerId
+  );
+  if (!blueprint) {
+    throw new AppError("NOT_FOUND", "Blueprint not found", 404);
+  }
+  if (blueprint.status === "APPROVED") {
+    return blueprint;
+  }
+  if (blueprint.status !== "DRAFT" && blueprint.status !== "REVIEW") {
+    throw new AppError(
+      "SESSION_INVALID_STATE",
+      `Cannot approve Blueprint from status ${blueprint.status}`,
+      409
     );
   }
-
-  return blueprint;
+  return args.repos.blueprints.updateStatus(
+    args.blueprintId,
+    args.ownerId,
+    "APPROVED",
+    new Date().toISOString()
+  );
 }

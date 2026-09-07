@@ -38,6 +38,7 @@ export function DecisionCanvas(props: {
   blueprint: Blueprint | null;
   onApproveDecision: () => void;
   onGenerateBlueprint: () => void;
+  onApproveBlueprint: () => void;
 }) {
   const { session } = props;
 
@@ -196,6 +197,16 @@ export function DecisionCanvas(props: {
                 <li key={c}>{c}</li>
               ))}
             </ul>
+            {props.blueprint.status === "DRAFT" ||
+            props.blueprint.status === "REVIEW" ? (
+              <button
+                type="button"
+                onClick={props.onApproveBlueprint}
+                className="lab-btn lab-btn-primary mt-2"
+              >
+                Duyệt Blueprint
+              </button>
+            ) : null}
           </div>
         ) : (
           <CanvasEmpty label="Chưa có blueprint — duyệt Decision Record trước." />

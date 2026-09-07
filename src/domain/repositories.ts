@@ -49,7 +49,9 @@ export interface AgentRunRepository {
 }
 
 export interface DecisionRecordRepository {
-  create(input: Omit<DecisionRecord, "id">): Promise<DecisionRecord>;
+  create(
+    input: Omit<DecisionRecord, "id"> & { id?: string }
+  ): Promise<DecisionRecord>;
   getById(id: string, ownerId: string): Promise<DecisionRecord | null>;
   getBySession(
     sessionId: string,
@@ -58,7 +60,7 @@ export interface DecisionRecordRepository {
 }
 
 export interface BlueprintRepository {
-  create(input: Omit<Blueprint, "id">): Promise<Blueprint>;
+  create(input: Omit<Blueprint, "id"> & { id?: string }): Promise<Blueprint>;
   getById(id: string, ownerId: string): Promise<Blueprint | null>;
   getBySession(sessionId: string, ownerId: string): Promise<Blueprint | null>;
   updateStatus(
@@ -80,6 +82,16 @@ export interface ExperimentRepository {
 export interface IdempotencyStore {
   get(key: string): Promise<string | null>;
   set(key: string, artifactId: string): Promise<void>;
+  /**
+   * Atomically reserves `key` for `artifactId` unless another caller has
+   * already claimed it — closes the read-then-write race a plain
+   * get()+set() has under concurrent requests. Returns won:true when this
+   * call owns the key, or won:false with the artifactId that won instead.
+   */
+  claim(
+    key: string,
+    artifactId: string
+  ): Promise<{ won: boolean; artifactId: string }>;
 }
 
 export interface RateLimitStore {

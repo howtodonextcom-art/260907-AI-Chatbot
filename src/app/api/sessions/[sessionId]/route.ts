@@ -7,7 +7,11 @@ import {
 } from "@/infrastructure/api/http";
 import { getRepositories } from "@/infrastructure/repositories";
 import { UpdateSessionSchema } from "@/domain/decision/schemas";
-import { canTransition } from "@/domain/decision/state-machine";
+import {
+  canEnterDecisionReady,
+  canEnterValidating,
+  canTransition,
+} from "@/domain/decision/state-machine";
 import { AppError } from "@/infrastructure/api/errors";
 import type { DecisionSession } from "@/domain/decision/types";
 
@@ -40,6 +44,7 @@ export async function PATCH(request: Request, { params }: Params) {
     if (!session) {
       return jsonError("NOT_FOUND", "Session not found", requestId);
     }
+    const patch = body as Partial<DecisionSession>;
     if (body.status && body.status !== session.status) {
       if (!canTransition(session.status, body.status)) {
         throw new AppError(
@@ -48,8 +53,40 @@ export async function PATCH(request: Request, { params }: Params) {
           409
         );
       }
+      if (body.status === "VALIDATING") {
+        const ok = canEnterValidating({
+          problem: patch.problem ?? session.problem,
+          objective: patch.objective ?? session.objective,
+          optionCount: (patch.options ?? session.options).length,
+        });
+        if (!ok) {
+          throw new AppError(
+            "SESSION_INVALID_STATE",
+            "Session does not meet requirements to enter VALIDATING",
+            409
+          );
+        }
+      }
+      if (body.status === "DECISION_READY") {
+        const unknowns = patch.unknowns ?? session.unknowns;
+        const highPriorityOpenUnknowns = unknowns.filter(
+          (u) => u.importance === "HIGH" && u.resolution === "OPEN"
+        ).length;
+        const ok = canEnterDecisionReady({
+          optionCount: (patch.options ?? session.options).length,
+          assumptionCount: (patch.assumptions ?? session.assumptions).length,
+          highPriorityOpenUnknowns,
+          domainValidationErrors: [],
+        });
+        if (!ok) {
+          throw new AppError(
+            "SESSION_INVALID_STATE",
+            "Session does not meet requirements to enter DECISION_READY",
+            409
+          );
+        }
+      }
     }
-    const patch = body as Partial<DecisionSession>;
     const updated = await repos.sessions.update(
       session.workspaceId,
       sessionId,

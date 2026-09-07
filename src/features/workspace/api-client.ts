@@ -13,6 +13,12 @@ export function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+export function clearAuthToken(): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+}
+
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit
