@@ -1,0 +1,15 @@
+# Next.js
+.next
+out
+node_modules
+src/tests
+*.test.ts
+*.spec.ts
+
+# Secrets — never deploy
+.env
+.env*.local
+env.local
+service.json
+**/service-account*.json
+*-firebase-adminsdk*.json

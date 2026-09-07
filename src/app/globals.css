@@ -1,0 +1,306 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0c1210;
+  --bg-elevated: #141b18;
+  --bg-panel: #1a2320;
+  --border: #2e3c36;
+  --border-strong: #3d5248;
+  --text: #eaf2ed;
+  --text-muted: #a3bdb0;
+  --accent: #3d9b6a;
+  --accent-strong: #2f7a52;
+  --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
+  --warn: #c4a035;
+  --danger: #c45c4a;
+  --analyst: #5b9fd4;
+  --critic: #d4a05b;
+  --judge: #5a9e96;
+  --type-xs: 0.75rem;
+  --type-sm: 0.875rem;
+  --type-base: 1rem;
+  --type-lg: 1.125rem;
+  --type-xl: 1.35rem;
+  --type-2xl: 1.75rem;
+  --type-3xl: 2.25rem;
+  --type-hero: clamp(2.5rem, 5vw, 3.75rem);
+  --radius: 10px;
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 160ms;
+  --dur: 280ms;
+  --dur-slow: 420ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1100px 520px at 8% -8%, #1a3328 0%, transparent 55%),
+    radial-gradient(800px 420px at 100% 0%, #1e2c26 0%, transparent 48%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-body), "Source Sans 3", "Segoe UI", sans-serif;
+  font-size: var(--type-base);
+  line-height: 1.5;
+}
+
+body::before {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--border) 35%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--border) 35%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 20%, transparent 75%);
+}
+
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@layer components {
+.font-display {
+  font-family: var(--font-display), Fraunces, Georgia, serif;
+}
+
+.type-eyebrow {
+  font-size: var(--type-xs);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.type-title {
+  font-family: var(--font-display), Fraunces, Georgia, serif;
+  font-size: var(--type-3xl);
+  line-height: 1.15;
+  font-weight: 560;
+}
+
+.type-section {
+  font-family: var(--font-display), Fraunces, Georgia, serif;
+  font-size: var(--type-lg);
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.type-body-muted {
+  font-size: var(--type-base);
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.lab-panel {
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+}
+
+.lab-elevated {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+}
+
+.lab-input {
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--bg) 55%, transparent);
+  border-radius: 8px;
+  color: var(--text);
+  min-height: 44px;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.lab-input:hover {
+  border-color: var(--border-strong);
+}
+
+.lab-input:focus,
+.lab-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.lab-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.65rem 1.1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.lab-btn:active {
+  transform: translateY(1px);
+}
+
+.lab-btn-primary {
+  background: var(--accent-strong);
+  color: white;
+}
+
+.lab-btn-primary:hover {
+  background: var(--accent);
+}
+
+.lab-btn-ghost {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.lab-btn-ghost:hover {
+  border-color: var(--border-strong);
+  background: var(--accent-soft);
+}
+
+.lab-empty {
+  animation: lab-fade-up var(--dur-slow) var(--ease-out) both;
+}
+
+.lab-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: lab-spin 0.8s linear infinite;
+}
+
+.lab-stream-cursor::after {
+  content: "";
+  display: inline-block;
+  width: 0.45em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--analyst);
+  animation: lab-blink 1s steps(1) infinite;
+}
+
+.lab-message-enter {
+  animation: lab-fade-up var(--dur) var(--ease-out) both;
+}
+
+.lab-panel-slide {
+  animation: lab-slide-in var(--dur-slow) var(--ease-out) both;
+}
+
+.lab-pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.lab-pipeline-step {
+  font-size: var(--type-xs);
+  letter-spacing: 0.04em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.lab-pipeline-step[data-active="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.lab-hero-visual {
+  animation: lab-fade-up 0.55s var(--ease-out) both;
+}
+
+.lab-cta-pulse:hover {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+}
+
+@keyframes lab-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes lab-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes lab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes lab-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .lab-stream-cursor::after {
+    animation: none;
+    opacity: 1;
+  }
+}
