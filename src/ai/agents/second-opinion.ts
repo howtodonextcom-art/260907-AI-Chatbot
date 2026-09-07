@@ -8,6 +8,23 @@ import {
 } from "@/ai/agents/schemas";
 
 /**
+ * Tries result.structured first; if that's absent OR present-but-invalid,
+ * falls through to lenient re-parsing of the raw content string before
+ * giving up (fixes the same fragility found live in Judge, 2026-09-08 —
+ * see CLAUDE.md [[deepseek-second-opinion]]).
+ */
+function parseSecondOpinionOutput(result: {
+  structured?: unknown;
+  content: string;
+}) {
+  if (result.structured) {
+    const direct = SecondOpinionOutputSchema.safeParse(result.structured);
+    if (direct.success) return direct;
+  }
+  return SecondOpinionOutputSchema.safeParse(parseLooseJson(result.content));
+}
+
+/**
  * Runs an independent DeepSeek pass in parallel with the Analyst. Always
  * targets "deepseek" directly (never resolveProviderForRole/fallback) — a
  * second opinion that silently fell back to Gemini would just be comparing
@@ -53,9 +70,7 @@ export async function runSecondOpinion(args: {
     baseRequest,
     { allowFallback: false }
   );
-  let structured = result.structured
-    ? SecondOpinionOutputSchema.safeParse(result.structured)
-    : SecondOpinionOutputSchema.safeParse(parseLooseJson(result.content));
+  let structured = parseSecondOpinionOutput(result);
 
   if (!structured.success) {
     result = await args.gateway.generate<SecondOpinionOutput>(
@@ -72,9 +87,7 @@ export async function runSecondOpinion(args: {
       },
       { allowFallback: false }
     );
-    structured = result.structured
-      ? SecondOpinionOutputSchema.safeParse(result.structured)
-      : SecondOpinionOutputSchema.safeParse(parseLooseJson(result.content));
+    structured = parseSecondOpinionOutput(result);
   }
 
   return {

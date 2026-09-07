@@ -4,6 +4,9 @@ import type { DecisionSession, DecisionRecord } from "@/domain/decision/types";
 import type { EvidenceItem } from "@/domain/evidence/types";
 import type { Blueprint } from "@/domain/blueprint/types";
 import { LabMark } from "@/components/ui/LabMark";
+import { UnknownsPanel } from "@/features/decision-canvas/UnknownsPanel";
+import type { ResolveUnknownPayload } from "@/features/decision-canvas/types";
+import { computeReadiness } from "@/domain/decision/unknown-policy";
 
 const PIPELINE = [
   "DISCOVERY",
@@ -46,8 +49,21 @@ export function DecisionCanvas(props: {
   onGenerateBlueprint: () => void;
   onApproveBlueprint: () => void;
   onExportBlueprint?: () => void;
+  onResolveUnknown: (
+    unknownId: string,
+    payload: ResolveUnknownPayload
+  ) => Promise<void>;
 }) {
   const { session } = props;
+  const contradictedAssumptionCount = session.assumptions.filter(
+    (a) => a.status === "CONTRADICTED"
+  ).length;
+  const readiness = computeReadiness({
+    optionCount: session.options.length,
+    assumptionCount: session.assumptions.length,
+    unknowns: session.unknowns,
+    contradictedAssumptionCount,
+  });
 
   return (
     <div className="grid gap-4 p-3 text-sm">
@@ -87,6 +103,60 @@ export function DecisionCanvas(props: {
           </p>
         ) : null}
       </section>
+
+      <section data-testid="readiness-summary">
+        <h2 className="type-section mb-1">Decision Readiness</h2>
+        <p
+          className="font-medium"
+          style={{ color: readiness.ready ? "var(--success)" : "var(--danger)" }}
+          data-testid="readiness-status"
+        >
+          {readiness.ready ? "READY" : "NOT READY"}
+        </p>
+        {readiness.blocking.length > 0 ? (
+          <ul className="mt-1 list-disc pl-4 text-xs" style={{ color: "var(--danger)" }}>
+            {readiness.blocking.map((b) => (
+              <li key={b.code} data-testid={`readiness-blocker-${b.code}`}>
+                {b.message}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {readiness.nonBlocking.length > 0 ? (
+          <ul className="mt-1 list-disc pl-4 text-xs" style={{ color: "var(--text-muted)" }}>
+            {readiness.nonBlocking.map((b) => (
+              <li key={b.code}>{b.message}</li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
+      <section>
+        <h2 className="type-section mb-1">
+          Constraints ({session.constraints.length})
+        </h2>
+        {session.constraints.length === 0 ? (
+          <CanvasEmpty label="Chưa có ràng buộc cứng nào được ghi nhận." />
+        ) : (
+          <ul className="list-disc pl-4">
+            {session.constraints.map((c) => (
+              <li key={c.id}>
+                {c.statement}{" "}
+                <span style={{ color: "var(--text-muted)" }}>
+                  ({c.source}
+                  {c.confirmedByUser ? ", confirmed" : ""})
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <UnknownsPanel
+        unknowns={session.unknowns}
+        evidence={props.evidence}
+        onResolve={props.onResolveUnknown}
+      />
 
       <section>
         <h2 className="type-section mb-1">
@@ -171,10 +241,9 @@ export function DecisionCanvas(props: {
       </section>
 
       <section>
-        {session.judgeDraft &&
-        session.status === "DECISION_READY" &&
-        !props.decision ? (
-          <div className="grid gap-2">
+        <h2 className="type-section mb-1">Decision</h2>
+        {!props.decision && session.judgeDraft ? (
+          <div className="grid gap-2" data-testid="judge-draft-panel">
             <p>
               Đề xuất Judge: <strong>{session.judgeDraft.decision}</strong>
             </p>
@@ -182,14 +251,33 @@ export function DecisionCanvas(props: {
               HEURISTIC CONFIDENCE: {session.judgeDraft.confidenceLabel} (
               {session.judgeDraft.confidenceScore})
             </p>
-            <button
-              type="button"
-              onClick={props.onApproveDecision}
-              className="lab-btn lab-btn-primary"
-              data-testid="approve-decision"
-            >
-              Duyệt Decision Record
-            </button>
+            {session.status === "DECISION_READY" ? (
+              <button
+                type="button"
+                onClick={props.onApproveDecision}
+                className="lab-btn lab-btn-primary"
+                data-testid="approve-decision"
+              >
+                Duyệt Decision Record
+              </button>
+            ) : (
+              <div data-testid="judge-blocked">
+                <p
+                  className="text-xs font-medium"
+                  style={{ color: "var(--danger)" }}
+                >
+                  Judge đã có đề xuất, nhưng session CHƯA sẵn sàng quyết định:
+                </p>
+                <ul
+                  className="list-disc pl-4 text-xs"
+                  style={{ color: "var(--danger)" }}
+                >
+                  {readiness.blocking.map((b) => (
+                    <li key={b.code}>{b.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         ) : props.decision ? (
           <div>

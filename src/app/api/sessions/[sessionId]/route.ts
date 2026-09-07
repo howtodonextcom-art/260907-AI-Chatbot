@@ -8,6 +8,7 @@ import {
 import { getRepositories } from "@/infrastructure/repositories";
 import { UpdateSessionSchema } from "@/domain/decision/schemas";
 import { gateStatusTransition } from "@/domain/decision/state-machine";
+import { countBlockingHighUnknowns } from "@/domain/decision/unknown-policy";
 import { AppError } from "@/infrastructure/api/errors";
 import type { DecisionSession } from "@/domain/decision/types";
 
@@ -48,9 +49,7 @@ export async function PATCH(request: Request, { params }: Params) {
         objective: patch.objective ?? session.objective,
         optionCount: (patch.options ?? session.options).length,
         assumptionCount: (patch.assumptions ?? session.assumptions).length,
-        highPriorityOpenUnknowns: unknowns.filter(
-          (u) => u.importance === "HIGH" && u.resolution === "OPEN"
-        ).length,
+        highPriorityOpenUnknowns: countBlockingHighUnknowns(unknowns),
         domainValidationErrors: [],
       });
       if (!gated.applied) {

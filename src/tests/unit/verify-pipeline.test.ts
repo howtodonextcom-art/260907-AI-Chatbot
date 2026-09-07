@@ -32,7 +32,7 @@ function session(overrides: Partial<DecisionSession> = {}): DecisionSession {
 }
 
 describe("VERIFY pipeline", () => {
-  it("runs calculator and marks CALCULATION evidence VERIFIED", async () => {
+  it("runs calculator on a compound claim but only PARTIALLY covers it — does not auto-SUPPORT (v13 §18/§46)", async () => {
     const result = await runVerifyPipeline({
       session: session(),
       ownerId: "u1",
@@ -44,8 +44,57 @@ describe("VERIFY pipeline", () => {
     expect(result.evidence[0].type).toBe("CALCULATION");
     expect(result.evidence[0].verificationStatus).toBe("VERIFIED");
     expect(result.evidence[0].createdBy).toBe("TOOL");
-    expect(result.sessionPatch.assumptions?.[0].status).toBe("SUPPORTED");
+    expect(result.evidence[0].verificationCoverage).toBe("PARTIAL");
+    expect(result.evidence[0].originalClaim).toBe(session().assumptions[0].statement);
+    // Evidence is still attached (visible, linked) but the compound claim
+    // (MRR, "all users") was never verified — must not be auto-SUPPORTED.
+    expect(result.sessionPatch.assumptions?.[0].status).toBe("UNVERIFIED");
+    expect(result.sessionPatch.assumptions?.[0].evidenceIds).toHaveLength(1);
     expect(result.stopReason).toBe("ENOUGH_EVIDENCE");
+  });
+
+  it("marks a PURE arithmetic assumption SUPPORTED — FULL coverage (v13 §21)", async () => {
+    const result = await runVerifyPipeline({
+      session: session({
+        assumptions: [
+          {
+            id: "a1",
+            statement: "20*15",
+            status: "UNVERIFIED",
+            importance: "MEDIUM",
+            evidenceIds: [],
+          },
+        ],
+      }),
+      ownerId: "u1",
+      domainPack: GENERIC_DECISION_WORKFLOW,
+    });
+    expect(result.evidence[0].verificationCoverage).toBe("FULL");
+    expect(result.sessionPatch.assumptions?.[0].status).toBe("SUPPORTED");
+  });
+
+  it("does NOT invoke the calculator on an identifier that merely contains digit/digit (MT4/MT5) — v13 §14-16/§45", async () => {
+    const result = await runVerifyPipeline({
+      session: session({
+        assumptions: [],
+        unknowns: [
+          {
+            id: "u1",
+            question: "Should FTMO data import use MT4/MT5 upload or API?",
+            importance: "HIGH",
+            resolution: "OPEN",
+            evidenceIds: [],
+          },
+        ],
+      }),
+      ownerId: "u1",
+      domainPack: GENERIC_DECISION_WORKFLOW,
+    });
+    expect(result.events.some((e) => e.event === "tool.started")).toBe(false);
+    expect(result.evidence).toHaveLength(0);
+    expect(result.sessionPatch.unknowns?.[0].resolution).toBe("OPEN");
+    expect(result.sessionPatch.unknowns?.[0].evidenceIds).toHaveLength(0);
+    expect(result.stopReason).toBe("NOT_VERIFIABLE");
   });
 
   it("does not invent verification when no arithmetic claim exists", async () => {

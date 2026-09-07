@@ -38,6 +38,10 @@ import {
   deriveBlueprintContent,
 } from "@/domain/blueprint/service";
 import { experimentDraftInput } from "@/domain/experiment/lifecycle";
+import {
+  countBlockingHighUnknowns,
+  isUnknownResolutionTerminal,
+} from "@/domain/decision/unknown-policy";
 
 /**
  * Transparent, documented heuristic mapping — not statistical precision.
@@ -153,9 +157,7 @@ export async function* runDecisionOrchestrator(args: {
         : args.intent === "CRITIQUE"
           ? "HIGH"
           : "MEDIUM",
-    blockingUnknownCount: args.session.unknowns.filter(
-      (u) => u.importance === "HIGH" && u.resolution === "OPEN"
-    ).length,
+    blockingUnknownCount: countBlockingHighUnknowns(args.session.unknowns),
     hasDeepseek: getServerEnv().hasDeepseek,
   });
 
@@ -804,7 +806,7 @@ export async function* runDecisionOrchestrator(args: {
             unresolvedUnknownIds: (
               sessionPatch.unknowns ?? args.session.unknowns
             )
-              .filter((u) => u.resolution === "OPEN")
+              .filter((u) => !isUnknownResolutionTerminal(u.resolution))
               .map((u) => u.id),
             tradeoffs: judge.structured.tradeoffs,
             reviewTriggers: judge.structured.reviewTriggers,
@@ -818,9 +820,8 @@ export async function* runDecisionOrchestrator(args: {
             sessionPatch.assumptions ?? args.session.assumptions;
           const mergedUnknowns =
             sessionPatch.unknowns ?? args.session.unknowns;
-          const highPriorityOpenUnknowns = mergedUnknowns.filter(
-            (u) => u.importance === "HIGH" && u.resolution === "OPEN"
-          ).length;
+          const highPriorityOpenUnknowns =
+            countBlockingHighUnknowns(mergedUnknowns);
           if (
             judge.structured.decision === "EXPERIMENT_FIRST"
           ) {
@@ -1045,9 +1046,7 @@ export function applyAnalystState(
     objective: session.objective,
     optionCount: options.length,
     assumptionCount: assumptions.length,
-    highPriorityOpenUnknowns: unknowns.filter(
-      (u) => u.importance === "HIGH" && u.resolution === "OPEN"
-    ).length,
+    highPriorityOpenUnknowns: countBlockingHighUnknowns(unknowns),
     domainValidationErrors: [],
     userAskedGenerateOptions: intent === "GENERATE_OPTIONS",
   };

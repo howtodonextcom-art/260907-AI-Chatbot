@@ -35,6 +35,14 @@ export interface VerificationMetadata {
   method?: string;
 }
 
+/**
+ * How much of the original claim/question the verification actually covers.
+ * A calculation can verify a numeric fragment of a compound claim ("20 x 15"
+ * inside "20 users x $15 = $300 MRR and they will all subscribe") without
+ * verifying the whole proposition — see CLAUDE.md [[ftmo-verify-classifier]].
+ */
+export type VerificationCoverage = "NONE" | "PARTIAL" | "FULL";
+
 export interface EvidenceItem {
   id: string;
   workspaceId: string;
@@ -55,6 +63,11 @@ export interface EvidenceItem {
   verifiedBy?: VerificationActor;
   verifiedAt?: ISODateTime;
   verificationMethod?: string;
+  /** The full original assumption/unknown text this evidence was extracted from. */
+  originalClaim?: string;
+  /** The exact substring that was actually verified (may be a subset of originalClaim). */
+  verifiedFragment?: string;
+  verificationCoverage?: VerificationCoverage;
   metadata?: Record<string, unknown>;
   createdAt: ISODateTime;
 }

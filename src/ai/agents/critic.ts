@@ -1,8 +1,26 @@
 import type { ModelGateway } from "@/ai/gateway/model-gateway";
 import type { NormalizedModelRequest } from "@/ai/gateway/model-provider";
 import { getPrompt } from "@/ai/prompts/registry";
-import { CriticOutputSchema, type CriticOutput } from "@/ai/agents/schemas";
+import {
+  CriticOutputSchema,
+  parseLooseJson,
+  type CriticOutput,
+} from "@/ai/agents/schemas";
 import { resolveProviderForRole } from "@/ai/gateway/model-gateway";
+
+/**
+ * Tries result.structured first; if that's absent OR present-but-invalid,
+ * falls through to lenient re-parsing of the raw content string before
+ * giving up — see CLAUDE.md [[deepseek-second-opinion]] for the original
+ * instance of this fragility (fixed live for Judge, 2026-09-08).
+ */
+function parseCriticOutput(result: { structured?: unknown; content: string }) {
+  if (result.structured) {
+    const direct = CriticOutputSchema.safeParse(result.structured);
+    if (direct.success) return direct;
+  }
+  return CriticOutputSchema.safeParse(parseLooseJson(result.content));
+}
 
 export async function runCritic(args: {
   gateway: ModelGateway;
@@ -56,9 +74,7 @@ export async function runCritic(args: {
   };
 
   let result = await args.gateway.generate<CriticOutput>(provider, baseRequest);
-  let structured = result.structured
-    ? CriticOutputSchema.safeParse(result.structured)
-    : CriticOutputSchema.safeParse(safeJson(result.content));
+  let structured = parseCriticOutput(result);
 
   if (!structured.success) {
     result = await args.gateway.generate<CriticOutput>(provider, {
@@ -71,9 +87,7 @@ export async function runCritic(args: {
         },
       ],
     });
-    structured = result.structured
-      ? CriticOutputSchema.safeParse(result.structured)
-      : CriticOutputSchema.safeParse(safeJson(result.content));
+    structured = parseCriticOutput(result);
   }
 
   return {
@@ -87,12 +101,4 @@ export async function runCritic(args: {
     promptVersion: prompt.version,
     schemaVersion: prompt.schemaVersion,
   };
-}
-
-function safeJson(content: string): unknown {
-  try {
-    return JSON.parse(content);
-  } catch {
-    return { reply: content };
-  }
 }

@@ -10,6 +10,7 @@ import type { AgentRun, Blueprint, ExperimentDefinition } from "@/domain/bluepri
 import type { DecisionRecord } from "@/domain/decision/types";
 import { ChatPanel } from "@/features/chat/ChatPanel";
 import { DecisionCanvas } from "@/features/decision-canvas/DecisionCanvas";
+import type { ResolveUnknownPayload } from "@/features/decision-canvas/types";
 import { SessionHeader } from "@/features/decision-session/SessionHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { LoadingBlock } from "@/components/ui/LoadingBlock";
@@ -384,6 +385,17 @@ export default function SessionPage() {
     }
   }
 
+  async function resolveUnknown(
+    unknownId: string,
+    payload: ResolveUnknownPayload
+  ) {
+    const data = await apiFetch<{ session: DecisionSession }>(
+      `/api/sessions/${sessionId}/unknowns/${unknownId}`,
+      { method: "PATCH", body: JSON.stringify(payload) }
+    );
+    setSession(data.session);
+  }
+
   async function exportBlueprint() {
     try {
       const token = getAuthToken();
@@ -518,6 +530,7 @@ export default function SessionPage() {
             onGenerateBlueprint={generateBlueprint}
             onApproveBlueprint={approveBlueprint}
             onExportBlueprint={exportBlueprint}
+            onResolveUnknown={resolveUnknown}
           />
         </div>
       </div>

@@ -61,17 +61,37 @@ export interface Assumption {
   evidenceIds: string[];
 }
 
+/**
+ * OPEN/VERIFY_NOW/EXPERIMENT_REQUIRED/HUMAN_DECISION_REQUIRED are all
+ * NON-TERMINAL — they describe what should happen next, not that anything
+ * has actually been resolved. Only RESOLVED (evidence/experiment-backed),
+ * HUMAN_DECISION (explicit human call, never reported as verified fact —
+ * see CLAUDE.md [[unknown-resolution-workflow]]), and ACCEPTED_RISK
+ * (explicit residual-risk acceptance) are terminal and may stop a HIGH
+ * Unknown from blocking DECISION_READY. See
+ * src/domain/decision/unknown-policy.ts for the single authoritative
+ * blocking-policy implementation (MASTER CODING PROMPT v13 §10).
+ */
+export type UnknownResolution =
+  | "OPEN"
+  | "VERIFY_NOW"
+  | "EXPERIMENT_REQUIRED"
+  | "HUMAN_DECISION_REQUIRED"
+  | "RESOLVED"
+  | "HUMAN_DECISION"
+  | "ACCEPTED_RISK";
+
 export interface Unknown {
   id: string;
   question: string;
   importance: "LOW" | "MEDIUM" | "HIGH";
-  resolution:
-    | "OPEN"
-    | "VERIFY_NOW"
-    | "EXPERIMENT_REQUIRED"
-    | "HUMAN_DECISION_REQUIRED"
-    | "RESOLVED";
+  resolution: UnknownResolution;
   evidenceIds: string[];
+  /** Required when resolution is HUMAN_DECISION or ACCEPTED_RISK. */
+  resolutionNote?: string;
+  resolvedAt?: ISODateTime;
+  /** ownerId of the user who resolved it (never AI/system for these two). */
+  resolvedBy?: string;
 }
 
 export interface Criterion {

@@ -4,25 +4,21 @@ import type { EvidenceItem } from "@/domain/evidence/types";
 import { toolCalculationDefaults } from "@/domain/evidence/trust";
 import type { DomainPack } from "@/domain-packs/generic";
 import { assertToolAllowed, getToolConnector } from "@/tools/registry";
+import {
+  computeCoverage,
+  findArithmeticCandidate,
+} from "@/ai/orchestration/arithmetic-classifier";
 
 export interface VerifySseEvent {
   event: "tool.started" | "tool.completed" | "run.partial";
   data: Record<string, unknown>;
 }
 
-const ARITHMETIC_RE =
-  /(\d+(?:\.\d+)?)\D{0,24}([+\-*/×x])\D{0,8}(\d+(?:\.\d+)?)/i;
-
 export interface VerifyPipelineResult {
   events: VerifySseEvent[];
   evidence: EvidenceItem[];
   sessionPatch: Partial<DecisionSession>;
   stopReason: "ENOUGH_EVIDENCE" | "NOT_VERIFIABLE" | "EXPERIMENT_REQUIRED" | null;
-}
-
-function toExpression(match: RegExpMatchArray): string {
-  const op = match[2] === "×" || match[2].toLowerCase() === "x" ? "*" : match[2];
-  return `${match[1]}${op}${match[3]}`;
 }
 
 export async function runVerifyPipeline(args: {
@@ -73,10 +69,13 @@ export async function runVerifyPipeline(args: {
 
   let verified = 0;
   for (const claim of claims) {
-    const match = claim.text.match(ARITHMETIC_RE);
-    if (!match) continue;
+    // Classify BEFORE extraction: "MT4/MT5", "H264/H265", "v1/v2" etc. must
+    // never reach the calculator as if they were division — see
+    // arithmetic-classifier.ts and CLAUDE.md [[ftmo-verify-classifier]].
+    const candidate = findArithmeticCandidate(claim.text);
+    if (!candidate) continue;
 
-    const expression = toExpression(match);
+    const expression = candidate.normalizedInput;
     events.push({
       event: "tool.started",
       data: {
@@ -105,6 +104,7 @@ export async function runVerifyPipeline(args: {
 
       const value = (result.output as { value?: number } | undefined)?.value;
       const trust = toolCalculationDefaults();
+      const coverage = computeCoverage(claim.text, candidate);
       const item: EvidenceItem = {
         id: uuidv4(),
         workspaceId: args.session.workspaceId,
@@ -123,23 +123,34 @@ export async function runVerifyPipeline(args: {
         verifiedBy: trust.verifiedBy,
         verifiedAt: now,
         verificationMethod: "calculator.evaluate",
+        originalClaim: claim.text,
+        verifiedFragment: candidate.verifiedFragment,
+        verificationCoverage: coverage,
         metadata: { expression, value },
         createdAt: now,
       };
       created.push(item);
       verified += 1;
 
+      // Only a FULL-coverage calculation may flip status: a PARTIAL
+      // calculation (e.g. "20 x 15" inside a compound claim about MRR and
+      // adoption) still attaches as evidence but must not be reported as
+      // having verified the whole proposition — see §17-19.
       if (claim.kind === "assumption") {
         const target = assumptions.find((a) => a.id === claim.id);
         if (target) {
-          target.status = "SUPPORTED";
           target.evidenceIds = [...target.evidenceIds, item.id];
+          if (coverage === "FULL") {
+            target.status = "SUPPORTED";
+          }
         }
       } else {
         const target = unknowns.find((u) => u.id === claim.id);
         if (target) {
-          target.resolution = "RESOLVED";
           target.evidenceIds = [...target.evidenceIds, item.id];
+          if (coverage === "FULL") {
+            target.resolution = "RESOLVED";
+          }
         }
       }
     } catch (error) {

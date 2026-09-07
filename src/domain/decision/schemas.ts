@@ -59,9 +59,41 @@ export const UnknownSchema = z.object({
     "EXPERIMENT_REQUIRED",
     "HUMAN_DECISION_REQUIRED",
     "RESOLVED",
+    "HUMAN_DECISION",
+    "ACCEPTED_RISK",
   ]),
   evidenceIds: z.array(z.string()),
+  resolutionNote: z.string().optional(),
+  resolvedAt: z.string().optional(),
+  resolvedBy: z.string().optional(),
 });
+
+/**
+ * Resolution actions the CLIENT may request for one Unknown. Deliberately
+ * NOT exposed via UpdateSessionSchema's `unknowns` array — a client PATCHing
+ * a whole unknowns array could otherwise set resolution="RESOLVED" with no
+ * justification at all (the exact "empty resolve" bypass MASTER CODING
+ * PROMPT v13 §8 forbids). This is the only path a client may use to change
+ * an Unknown's resolution; see src/domain/decision/unknown-policy.ts and
+ * CLAUDE.md [[unknown-resolution-workflow]].
+ */
+export const ResolveUnknownSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("VERIFY_NOW") }),
+  z.object({ action: z.literal("MARK_EXPERIMENT") }),
+  z.object({ action: z.literal("REQUEST_HUMAN_DECISION") }),
+  z.object({
+    action: z.literal("RESOLVE_WITH_EVIDENCE"),
+    evidenceIds: z.array(z.string()).min(1),
+  }),
+  z.object({
+    action: z.literal("HUMAN_DECISION"),
+    resolutionNote: z.string().min(1).max(5000),
+  }),
+  z.object({
+    action: z.literal("ACCEPT_RISK"),
+    resolutionNote: z.string().min(1).max(5000),
+  }),
+]);
 
 /**
  * DECIDED is intentionally excluded here. It may only be assigned by
@@ -80,7 +112,10 @@ export const UpdateSessionSchema = z.object({
   latestSummary: z.string().optional(),
   constraints: z.array(ConstraintSchema).optional(),
   assumptions: z.array(AssumptionSchema).optional(),
-  unknowns: z.array(UnknownSchema).optional(),
+  // unknowns intentionally omitted — a client must never be able to set
+  // Unknown.resolution via a bulk-array PATCH with no justification. Use
+  // PATCH /api/sessions/:sessionId/unknowns/:unknownId (ResolveUnknownSchema)
+  // instead. See CLAUDE.md [[unknown-resolution-workflow]].
   options: z.array(OptionSchema).optional(),
   criteria: z.array(CriterionSchema).optional(),
 });

@@ -1,5 +1,6 @@
 import type { AiBudget, Assumption, Unknown } from "@/domain/decision/types";
 import type { EvidenceItem } from "@/domain/evidence/types";
+import { countBlockingHighUnknowns } from "@/domain/decision/unknown-policy";
 
 export type StopReason =
   | "ENOUGH_EVIDENCE"
@@ -143,9 +144,7 @@ export function sessionStopFlags(args: {
   | "unverifiedAssumptionCount"
   | "evidenceCoverage"
 > {
-  const blockingUnknownCount = args.unknowns.filter(
-    (u) => u.importance === "HIGH" && u.resolution === "OPEN"
-  ).length;
+  const blockingUnknownCount = countBlockingHighUnknowns(args.unknowns);
   return {
     blockingUnknownCount,
     experimentRequired: args.unknowns.some(

@@ -202,3 +202,157 @@ Java/emulator sẵn sàng.
 **Version note:** ghim `@firebase/rules-unit-testing@^4.0.1` (không phải
 `^5.x` mới nhất) vì `firebase` trong repo đang ở `^11.10.0` và v5 đòi peer
 dep `firebase@^12.0.0`. Xem mục Nợ kỹ thuật.
+
+## Fix sản phẩm: [[unknown-resolution-workflow]] — HIGH-01 (MASTER CODING PROMPT v13, 2026-09-08)
+
+**Nguồn:** phát hiện thật từ `reports/26-09-07-23-49-kiem-thu-e2e-ftmo-decision-session.md`
+— hội đồng đa tác tử chạy thật (Gemini/Groq/DeepSeek) tới JudgeDraft, nhưng
+session kẹt VALIDATING vĩnh viễn: 2 unknown HIGH OPEN, Decision Canvas không
+có UI để đóng unknown, nút duyệt không hiện, `/decision` trả 409. Cổng
+`canEnterDecisionReady` (P0-01) chặn ĐÚNG — vấn đề là sản phẩm thiếu đường
+hợp lệ để thoả mãn cổng đó, không phải cổng sai.
+
+**Lỗ hổng ngữ nghĩa đi kèm (chưa từng bị khai thác nhưng có thật):** cổng cũ
+chỉ chặn khi `resolution === "OPEN"`. Một Unknown HIGH được gắn
+`VERIFY_NOW`/`EXPERIMENT_REQUIRED`/`HUMAN_DECISION_REQUIRED` (tức "đã được
+gắn cờ cần xử lý" — KHÔNG phải "đã xử lý xong") sẽ vô tình KHÔNG còn chặn
+DECISION_READY, dù chưa có evidence/thí nghiệm/quyết định con người nào thật
+sự xảy ra.
+
+**Fix — domain model:**
+- `Unknown.resolution` thêm 2 giá trị TERMINAL mới: `HUMAN_DECISION` (quyết
+  định thủ công có ghi chú, KHÔNG BAO GIỜ báo cáo như sự thật đã kiểm
+  chứng) và `ACCEPTED_RISK` (chấp nhận rủi ro còn lại tường minh). Thêm
+  `resolutionNote`/`resolvedAt`/`resolvedBy` để giữ provenance.
+- `src/domain/decision/unknown-policy.ts` — DUY NHẤT một nơi quyết định
+  Unknown có đang chặn hay không (`isUnknownBlocking`/
+  `countBlockingHighUnknowns`, cùng pattern với
+  `gateStatusTransition`): CHỈ `RESOLVED`/`HUMAN_DECISION`/`ACCEPTED_RISK`
+  mới ngừng chặn — `OPEN`/`VERIFY_NOW`/`EXPERIMENT_REQUIRED`/
+  `HUMAN_DECISION_REQUIRED` đều vẫn chặn vì chưa có gì thật sự được giải
+  quyết. Tất cả nơi từng tự tính `highPriorityOpenUnknowns` inline
+  (`stop-conditions.ts`, `decision-orchestrator.ts` ×3, `route.ts`) giờ gọi
+  qua đúng một hàm này.
+- `resolveUnknown()` (cùng file) — 6 action giới hạn: `VERIFY_NOW`,
+  `MARK_EXPERIMENT`, `REQUEST_HUMAN_DECISION` (chỉ gắn cờ, không tự giải
+  quyết), `RESOLVE_WITH_EVIDENCE` (bắt buộc evidenceIds thật, đã tồn tại
+  trong session, `verificationStatus === "VERIFIED"` — không chấp nhận ID
+  tuỳ tiện), `HUMAN_DECISION`/`ACCEPT_RISK` (bắt buộc `resolutionNote`
+  không rỗng). Không có action nào cho phép "Resolved" trống — đúng yêu cầu
+  chống bypass rỗng.
+- `computeReadiness()` — tóm tắt readiness xác định (KHÔNG dùng LLM), trả
+  `blocking`/`nonBlocking` với `code` máy đọc được (`NO_OPTIONS`,
+  `NO_ASSUMPTIONS`, `HIGH_UNKNOWNS_OPEN`, `CONTRADICTED_ASSUMPTIONS`,
+  `NON_HIGH_UNKNOWNS_OPEN`).
+
+**Fix — API:** `PATCH /api/sessions/:sessionId/unknowns/:unknownId`
+(`src/app/api/.../unknowns/[unknownId]/route.ts`) là đường DUY NHẤT client
+được đổi `resolution`. `UpdateSessionSchema` (PATCH session chung) đã BỎ
+field `unknowns` — trước đây một client có thể PATCH thẳng mảng `unknowns`
+với `resolution: "RESOLVED"` không cần bằng chứng gì (đúng lỗ hổng "empty
+resolve bypass" mà v13 §8 cấm); giờ endpoint đó chỉ còn tác dụng lên
+`options`/`assumptions`/`constraints`/`criteria`.
+
+**Fix — UI:** `src/features/decision-canvas/UnknownsPanel.tsx` — Decision
+Canvas giờ có section Unknowns hiển thị mọi unknown (câu hỏi, importance,
+resolution, evidence liên kết, resolutionNote), với 5 nút hành động cho
+unknown HIGH đang chặn. Thêm section Constraints (trước đây không hiện dù
+domain model đã có). Thêm section "Decision Readiness" xác định
+(`computeReadiness`). Sửa lỗi hiển thị JudgeDraft (LOW-01 cũ): trước đây
+điều kiện `status === "DECISION_READY"` làm JudgeDraft biến mất hoàn toàn
+khi bị cổng chặn — giờ luôn hiện "Đề xuất Judge" khi có `judgeDraft`, kèm
+danh sách blocker cụ thể nếu session chưa `DECISION_READY` (không còn phải
+đoán tại sao nút Duyệt không xuất hiện).
+
+**Test:** `src/tests/unit/unknown-policy.test.ts` (22 test, đúng danh sách
+v13 §40: HIGH+OPEN/VERIFY_NOW/EXPERIMENT_REQUIRED/HUMAN_DECISION_REQUIRED
+đều chặn, HIGH+RESOLVED/HUMAN_DECISION/ACCEPTED_RISK đều hết chặn,
+MEDIUM/LOW không bao giờ chặn, resolve rỗng bị từ chối, evidence sai
+owner/chưa VERIFIED bị từ chối, readiness trả đúng blocker code).
+`src/tests/integration/unknown-resolution-closure.test.ts` (5 test) — vòng
+lặp đóng ĐẦY ĐỦ qua route handler thật (v13 §44, mandatory release test):
+HIGH Unknown chặn → `/decision` 409 → giải quyết hợp lệ bằng
+RESOLVE_WITH_EVIDENCE → PATCH status DECISION_READY thành công → approve
+→ DECIDED → Blueprint DRAFT → APPROVED; cộng cross-user 404, ID unknown
+lạ 404, bulk-array bypass đã đóng.
+
+## Fix bảo mật/chất lượng: [[ftmo-verify-classifier]] — HIGH-02 (MASTER CODING PROMPT v13, 2026-09-08)
+
+**Nguồn:** cùng báo cáo QA — Unknown hỏi "upload MT4/MT5 hay dùng API?" bị
+regex VERIFY cũ (`ARITHMETIC_RE` nuốt filler tuỳ ý giữa 2 nhóm chữ số)
+hiểu nhầm thành phép chia `4/5 = 0.8`, tạo Evidence CALCULATION
+`VERIFIED` sai hoàn toàn — false-positive verification.
+
+**Fix:** `src/ai/orchestration/arithmetic-classifier.ts` — tách classify
+khỏi extract. Vẫn giữ gap tuỳ ý giữa 2 số (`\D{0,24}`) để bắt được câu tự
+nhiên hợp lệ như "20 users x $15", nhưng validate: KHÔNG cho phép chữ cái
+Unicode (`\p{L}`) chạm trực tiếp vào 1 trong 2 nhóm chữ số ở CẢ 2 phía
+(trước/sau) — dùng regex flag `d` (indices) để biết chính xác vị trí từng
+nhóm. Đây là điều phân biệt "20" (số thật) với "4" trong "MT4" hay "2"
+trong "IPv2" (số dính danh định). Không dùng blacklist liệt kê — tổng quát
+cho MT4/MT5, H264/H265, IPv4/IPv6, USB2/USB3, Gen4/Gen5, v1/v2, 4K/8K,
+ISO27001/27002, A/B (A/B tự động an toàn vì không có chữ số nào để khớp).
+
+**Verification coverage (v13 §17-19):** thêm `VerificationCoverage =
+"NONE"|"PARTIAL"|"FULL"` (`src/domain/evidence/types.ts`, field
+`originalClaim`/`verifiedFragment`/`verificationCoverage` trên
+`EvidenceItem`). Coverage = tỉ lệ độ dài fragment đã verify / độ dài toàn
+bộ claim (ngưỡng 0.85 = FULL). Assumption chỉ được tự động chuyển
+`SUPPORTED` khi coverage FULL; PARTIAL vẫn gắn evidence (không giấu) nhưng
+GIỮ NGUYÊN status — không còn báo cáo "20 users × $15 = $300 MRR và tất cả
+sẽ subscribe" là đã verified chỉ vì phần số học `20×15` đúng. Tương tự
+Unknown chỉ chuyển `RESOLVED` khi coverage FULL.
+
+**Test:** `src/tests/unit/arithmetic-classifier.test.ts` (19 test, đúng
+danh sách v13 §41) + `src/tests/unit/verify-pipeline.test.ts` (bổ sung 3
+test: compound claim → PARTIAL không auto-SUPPORTED, pure arithmetic →
+FULL → SUPPORTED, MT4/MT5 trong Unknown thật → không gọi calculator, không
+tạo evidence, resolution giữ nguyên OPEN).
+
+## Fix phát hiện qua live QA: [[agent-structured-parse-recovery]] (2026-09-08)
+
+**Nguồn:** phát hiện TRỰC TIẾP khi verify HIGH-01/LOW-01 bằng browser thật
+(không phải suy đoán) — chạy `PREPARE_DECISION` thật, Judge (Gemini) trả
+lời bình thường trong chat, `AgentRun` ghi `status=COMPLETED`, nhưng
+`session.judgeDraft` HOÀN TOÀN KHÔNG được lưu — nút "Duyệt Decision Record"
+không bao giờ xuất hiện, không có lỗi nào lộ ra. Đây là bug thật đang tồn
+tại trong code trước khi bắt đầu phiên làm việc này, không phải do các fix
+HIGH-01/HIGH-02.
+
+**Nguyên nhân gốc:** `src/ai/providers/gemini-provider.ts` làm
+`JSON.parse(content)` thô (không bọc fence-recovery) để tạo `structured` —
+nếu Gemini bọc JSON trong ```json fence hoặc thêm text thừa, `JSON.parse`
+throw, `structured` thành `undefined`. Điều đó tự nó vô hại vì
+`judge.ts`/`analyst.ts`/`critic.ts`/`second-opinion.ts` đều có lớp phục hồi
+tự viết bằng `parseLooseJson` — NHƯNG lớp phục hồi đó chỉ được gọi khi
+`result.structured` HOÀN TOÀN falsy. Nếu `result.structured` có giá trị
+(object) nhưng KHÔNG khớp Zod schema (ví dụ SDK tự parse được JSON nhưng
+sai field), code cũ bỏ qua thẳng `parseLooseJson`, không bao giờ thử phục
+hồi từ `content` thô — mất toàn bộ output thật của model dù nó có thể phục
+hồi được.
+
+**Fix:** áp dụng ĐÚNG MỘT pattern cho cả 4 file
+(`judge.ts`/`analyst.ts`/`critic.ts`/`second-opinion.ts`): thử
+`result.structured` trước; nếu absent HOẶC parse Zod thất bại, LUÔN thử lại
+`parseLooseJson(result.content)` trước khi bỏ cuộc. Đây là đúng bài học đã
+ghi ở [[deepseek-second-opinion]] (DeepSeek/SecondOpinion) nhưng lần này áp
+dụng rộng ra cả Gemini/Judge — chứng minh lời dặn "nếu sau này thêm role
+mới dùng cho output có cấu trúc, áp dụng lại" cũng đúng khi bug xuất hiện ở
+provider khác, không chỉ DeepSeek.
+
+**Test:** `src/tests/unit/agent-structured-recovery.test.ts` (6 test, dùng
+`ModelGateway` thật với fake `ModelProvider` — không mock module) — tái
+hiện chính xác kịch bản lỗi (`structured` present nhưng thiếu field bắt
+buộc, `content` chứa JSON đầy đủ trong fence) cho cả Judge/Critic/Analyst,
+xác nhận recovery thành công; cộng 1 test xác nhận hành vi cũ (structured
+hoàn toàn không parse được → fallback an toàn `INSUFFICIENT_EVIDENCE`,
+không mất `reply`) vẫn giữ nguyên.
+
+**Verify sống (không chỉ unit test):** chạy lại đúng kịch bản FTMO qua
+browser thật lần 2 sau khi vá — `PREPARE_DECISION` → `judgeDraft` được lưu
+đúng → nút "Duyệt Decision Record" xuất hiện → duyệt → DECIDED → tạo
+Blueprint DRAFT → duyệt Blueprint → APPROVED. Toàn bộ vòng lặp
+DISCOVERY → VALIDATING → (chặn 2 Unknown HIGH) → giải quyết hợp lệ →
+DECISION_READY → DECIDED → Blueprint APPROVED chạy được TRỌN VẸN qua UI
+thật với API AI thật (Gemini/Groq/DeepSeek) — đúng yêu cầu "Release Hard
+Gate" của MASTER CODING PROMPT v13 §70.

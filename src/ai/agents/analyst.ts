@@ -52,7 +52,7 @@ export async function runAnalyst(args: {
     baseRequest
   );
 
-  let structured = parseAnalystStructured(result.structured ?? result.content);
+  let structured = parseAnalystOutput(result);
 
   if (!structured.success) {
     result = await args.gateway.generate<AnalystOutput>(provider, {
@@ -65,7 +65,7 @@ export async function runAnalyst(args: {
         },
       ],
     });
-    structured = parseAnalystStructured(result.structured ?? result.content);
+    structured = parseAnalystOutput(result);
   }
 
   return {
@@ -85,5 +85,22 @@ function parseAnalystStructured(raw: unknown) {
   const parsed =
     typeof raw === "string" ? parseLooseJson(raw) : (raw ?? {});
   return AnalystOutputSchema.safeParse(normalizeAnalystPayload(parsed));
+}
+
+/**
+ * Tries result.structured first; if that's absent OR present-but-invalid
+ * (e.g. markdown-fenced JSON the provider's own naive JSON.parse only
+ * partially handled), falls through to lenient re-parsing of the raw
+ * content string before giving up. Fixes the same class of silent-loss bug
+ * found live in Judge (2026-09-08) — see CLAUDE.md
+ * [[deepseek-second-opinion]] for the original SecondOpinion instance of
+ * this fragility.
+ */
+function parseAnalystOutput(result: { structured?: unknown; content: string }) {
+  if (result.structured) {
+    const direct = parseAnalystStructured(result.structured);
+    if (direct.success) return direct;
+  }
+  return parseAnalystStructured(result.content);
 }
 

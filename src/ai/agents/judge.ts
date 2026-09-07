@@ -1,8 +1,40 @@
 import type { ModelGateway } from "@/ai/gateway/model-gateway";
 import type { NormalizedModelRequest } from "@/ai/gateway/model-provider";
 import { getPrompt } from "@/ai/prompts/registry";
-import { JudgeOutputSchema, type JudgeOutput } from "@/ai/agents/schemas";
+import {
+  JudgeOutputSchema,
+  parseLooseJson,
+  type JudgeOutput,
+} from "@/ai/agents/schemas";
 import { resolveProviderForRole } from "@/ai/gateway/model-gateway";
+import type { z } from "zod";
+
+/**
+ * Judge's structured JSON draft is not optional decoration — losing it
+ * silently means PREPARE_DECISION runs, costs real money, visibly replies
+ * in chat, and yet never writes judgeDraft to the session (observed live,
+ * 2026-09-08: Gemini returned a structured object whose shape narrowly
+ * failed JudgeOutputSchema — e.g. markdown-fenced JSON the provider's own
+ * naive JSON.parse only partially handled — and the old code only ever
+ * retried lenient content-based recovery when result.structured was
+ * COMPLETELY absent, never when it was present-but-invalid). This mirrors
+ * the DeepSeek truncation bug already fixed for SecondOpinion (see
+ * CLAUDE.md [[deepseek-second-opinion]]) — same fragility, different
+ * provider. parseLooseJson (fenced-block + brace-slice extraction) is tried
+ * on the raw content whenever the direct parse fails, before giving up.
+ */
+function parseJudgeOutput(result: {
+  structured?: unknown;
+  content: string;
+}): z.SafeParseReturnType<unknown, JudgeOutput> {
+  if (result.structured) {
+    const direct = JudgeOutputSchema.safeParse(result.structured);
+    if (direct.success) return direct;
+  }
+  const loose = JudgeOutputSchema.safeParse(parseLooseJson(result.content));
+  if (loose.success) return loose;
+  return JudgeOutputSchema.safeParse(safeJson(result.content));
+}
 
 export async function runJudge(args: {
   gateway: ModelGateway;
@@ -57,9 +89,7 @@ export async function runJudge(args: {
   };
 
   let result = await args.gateway.generate<JudgeOutput>(provider, baseRequest);
-  let structured = result.structured
-    ? JudgeOutputSchema.safeParse(result.structured)
-    : JudgeOutputSchema.safeParse(safeJson(result.content));
+  let structured = parseJudgeOutput(result);
 
   if (!structured.success) {
     result = await args.gateway.generate<JudgeOutput>(provider, {
@@ -72,9 +102,7 @@ export async function runJudge(args: {
         },
       ],
     });
-    structured = result.structured
-      ? JudgeOutputSchema.safeParse(result.structured)
-      : JudgeOutputSchema.safeParse(safeJson(result.content));
+    structured = parseJudgeOutput(result);
   }
 
   return {
