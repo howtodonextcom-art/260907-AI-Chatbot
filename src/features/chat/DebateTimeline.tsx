@@ -7,12 +7,14 @@ const ROLE_LABEL: Record<AgentRole, string> = {
   ANALYST: "Analyst",
   CRITIC: "Critic",
   JUDGE: "Judge",
+  SECOND_OPINION: "2nd Opinion",
 };
 
 const ROLE_COLOR: Record<AgentRole, string> = {
   ANALYST: "var(--analyst)",
   CRITIC: "var(--critic)",
   JUDGE: "var(--judge)",
+  SECOND_OPINION: "var(--second-opinion)",
 };
 
 /** Last debate round: agent roles after the most recent USER message. */
@@ -41,7 +43,8 @@ export function DebateTimeline(props: {
   const showActive =
     props.activeRole === "ANALYST" ||
     props.activeRole === "CRITIC" ||
-    props.activeRole === "JUDGE"
+    props.activeRole === "JUDGE" ||
+    props.activeRole === "SECOND_OPINION"
       ? (props.activeRole as AgentRole)
       : null;
 

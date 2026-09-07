@@ -11,6 +11,7 @@ export async function runJudge(args: {
   };
   analystContent: string;
   criticContent?: string;
+  secondOpinionContent?: string;
 }): Promise<{
   content: string;
   structured?: JudgeOutput;
@@ -43,6 +44,9 @@ export async function runJudge(args: {
           args.criticContent
             ? `Critic:\n${args.criticContent}`
             : "Critic: (unavailable / skipped)",
+          args.secondOpinionContent
+            ? `Independent second opinion (different provider):\n${args.secondOpinionContent}`
+            : "Second opinion: (unavailable / skipped)",
         ].join("\n\n"),
       },
     ],

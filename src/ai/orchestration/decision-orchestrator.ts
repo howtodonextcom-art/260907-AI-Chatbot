@@ -4,6 +4,8 @@ import { ModelGateway } from "@/ai/gateway/model-gateway";
 import { runAnalyst } from "@/ai/agents/analyst";
 import { runCritic } from "@/ai/agents/critic";
 import { runJudge } from "@/ai/agents/judge";
+import { runSecondOpinion } from "@/ai/agents/second-opinion";
+import { getServerEnv } from "@/config/env";
 import { buildContext } from "@/ai/orchestration/context-builder";
 import { decideRouting } from "@/ai/orchestration/routing-policy";
 import {
@@ -131,6 +133,8 @@ export async function* runDecisionOrchestrator(args: {
 
   let analystContent = "";
   let criticContent: string | undefined;
+  let secondOpinionContent: string | undefined;
+  let secondOpinionAgreement: number | undefined;
   let partial = false;
   let sessionPatch: Partial<DecisionSession> = {};
   let totalCost = 0;
@@ -143,6 +147,32 @@ export async function* runDecisionOrchestrator(args: {
     };
     return;
   }
+
+  // Kick off DeepSeek's independent second opinion CONCURRENTLY with Analyst
+  // (not awaited yet) — see [[deepseek-second-opinion]] in CLAUDE.md for why
+  // this exists. Only in DEEP, only when DeepSeek is actually configured;
+  // never falls back to another provider (see runSecondOpinion).
+  const secondOpinionPromise =
+    args.routeMode === "DEEP" && getServerEnv().hasDeepseek
+      ? runSecondOpinion({
+          gateway,
+          request: {
+            routeMode: args.routeMode,
+            systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("ANALYST")}`,
+            messages: [{ role: "user", content: userContent }],
+            // DeepSeek tends to be verbose; give real headroom so its JSON
+            // response completes instead of truncating mid-object (which
+            // silently loses agreementScore — see CLAUDE.md tech debt log).
+            maxOutputTokens: Math.min(2000, budget.maxOutputTokens),
+            metadata: {
+              requestId: args.requestId,
+              workspaceId: args.session.workspaceId,
+              sessionId: args.session.id,
+              promptVersion: "v1",
+            },
+          },
+        })
+      : null;
 
   // --- Analyst ---
   yield {
@@ -268,6 +298,117 @@ export async function* runDecisionOrchestrator(args: {
     return;
   }
 
+  // --- Second Opinion (optional, DEEP + DeepSeek configured only) ---
+  // Was already running concurrently with Analyst above; this just collects
+  // the result. A DeepSeek failure here is non-fatal — Analyst's output
+  // stands on its own, matching the existing Critic/Judge partial-failure
+  // philosophy (spec v5 §30).
+  if (secondOpinionPromise) {
+    yield {
+      event: "agent.started",
+      data: { role: "SECOND_OPINION", provider: "deepseek" },
+    };
+    const secondOpinionRun = await args.repos.agentRuns.create({
+      workspaceId: args.session.workspaceId,
+      sessionId: args.session.id,
+      ownerId: args.ownerId,
+      role: "SECOND_OPINION",
+      routeMode: args.routeMode,
+      provider: "deepseek",
+      model: "pending",
+      promptVersion: "v1",
+      schemaVersion: "1.0",
+      status: "RUNNING",
+      startedAt: new Date().toISOString(),
+    });
+
+    try {
+      const secondOpinion = await secondOpinionPromise;
+      secondOpinionContent =
+        secondOpinion.structured?.reply ??
+        extractReply(secondOpinion.content) ??
+        secondOpinion.content;
+      secondOpinionAgreement = secondOpinion.structured?.agreementScore;
+
+      recordUsage(tracker, {
+        inputTokens: secondOpinion.usage.inputTokens,
+        outputTokens: secondOpinion.usage.outputTokens,
+        costUsd: secondOpinion.estimatedCostUsd,
+      });
+      totalCost += secondOpinion.estimatedCostUsd ?? 0;
+
+      await args.repos.agentRuns.update(
+        args.session.workspaceId,
+        args.session.id,
+        secondOpinionRun.id,
+        args.ownerId,
+        {
+          provider: secondOpinion.provider,
+          model: secondOpinion.model,
+          promptVersion: secondOpinion.promptVersion,
+          schemaVersion: secondOpinion.schemaVersion,
+          inputTokens: secondOpinion.usage.inputTokens,
+          outputTokens: secondOpinion.usage.outputTokens,
+          latencyMs: secondOpinion.latencyMs,
+          costUsd: secondOpinion.estimatedCostUsd,
+          status: "COMPLETED",
+          finishedAt: new Date().toISOString(),
+        }
+      );
+
+      await args.repos.messages.create({
+        workspaceId: args.session.workspaceId,
+        sessionId: args.session.id,
+        ownerId: args.ownerId,
+        role: "ASSISTANT",
+        content: secondOpinionContent,
+        runId: secondOpinionRun.id,
+        agentRole: "SECOND_OPINION",
+        provider: secondOpinion.provider,
+        model: secondOpinion.model,
+        createdAt: new Date().toISOString(),
+      });
+
+      for (const chunk of chunkText(secondOpinionContent, 48)) {
+        yield {
+          event: "token.delta",
+          data: { runId: secondOpinionRun.id, role: "SECOND_OPINION", text: chunk },
+        };
+      }
+
+      yield {
+        event: "agent.completed",
+        data: {
+          runId: secondOpinionRun.id,
+          role: "SECOND_OPINION",
+          provider: secondOpinion.provider,
+        },
+      };
+    } catch (error) {
+      await args.repos.agentRuns.update(
+        args.session.workspaceId,
+        args.session.id,
+        secondOpinionRun.id,
+        args.ownerId,
+        {
+          status: "FAILED",
+          errorCode: "PROVIDER_ERROR",
+          errorMessage:
+            error instanceof Error ? error.message : "Second opinion failed",
+          finishedAt: new Date().toISOString(),
+        }
+      );
+      yield {
+        event: "run.partial",
+        data: {
+          role: "SECOND_OPINION",
+          message: "DeepSeek second opinion failed; Analyst output preserved",
+          retryable: true,
+        },
+      };
+    }
+  }
+
   // --- Critic (optional) ---
   if (routing.runCritic) {
     const criticSpend = canSpend(tracker, budget);
@@ -300,6 +441,7 @@ export async function* runDecisionOrchestrator(args: {
         const critic = await runCritic({
           gateway,
           analystContent,
+          secondOpinionContent,
           request: {
             routeMode: args.routeMode,
             systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("CRITIC")}`,
@@ -432,6 +574,7 @@ export async function* runDecisionOrchestrator(args: {
           gateway,
           analystContent,
           criticContent,
+          secondOpinionContent,
           request: {
             routeMode: args.routeMode,
             systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("JUDGE")}`,
@@ -504,6 +647,7 @@ export async function* runDecisionOrchestrator(args: {
               .map((u) => u.id),
             tradeoffs: judge.structured.tradeoffs,
             reviewTriggers: judge.structured.reviewTriggers,
+            secondOpinionAgreement,
             confidenceLabel: judge.structured.confidenceLabel,
             confidenceScore: judge.structured.confidenceScore,
           };
@@ -862,7 +1006,10 @@ export async function approveDecision(args: {
       draft.unresolvedUnknownIds.length / 5
     ),
     assumptionPenalty: Math.min(1, args.session.assumptions.length / 10),
-    agentAgreement: 0.7,
+    // Real signal when DeepSeek's independent second opinion ran (DEEP mode
+    // only); 0.7 fallback (unmeasured-but-assumed-reasonable) when it
+    // didn't, matching the previous hard-coded default.
+    agentAgreement: draft.secondOpinionAgreement ?? 0.7,
     experimentStrength: 0.2,
   });
 

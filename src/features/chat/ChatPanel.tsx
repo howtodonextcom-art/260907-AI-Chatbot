@@ -12,6 +12,7 @@ const STREAM_COLOR: Record<string, string> = {
   ANALYST: "var(--analyst)",
   CRITIC: "var(--critic)",
   JUDGE: "var(--judge)",
+  SECOND_OPINION: "var(--second-opinion)",
 };
 
 export function ChatPanel(props: {

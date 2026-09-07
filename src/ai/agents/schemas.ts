@@ -86,9 +86,19 @@ export const JudgeOutputSchema = z.object({
   unresolvedUnknowns: z.array(z.string()).default([]),
 });
 
+export const SecondOpinionOutputSchema = z.object({
+  reply: z.string(),
+  agreesWithAnalyst: z.boolean().default(true),
+  /** 0 = fully disagrees, 1 = fully agrees. Feeds confidence.agentAgreement. */
+  agreementScore: z.number().min(0).max(1).default(0.5),
+  divergentPoints: z.array(z.string()).default([]),
+  additionalRisks: z.array(z.string()).default([]),
+});
+
 export type AnalystOutput = z.infer<typeof AnalystOutputSchema>;
 export type CriticOutput = z.infer<typeof CriticOutputSchema>;
 export type JudgeOutput = z.infer<typeof JudgeOutputSchema>;
+export type SecondOpinionOutput = z.infer<typeof SecondOpinionOutputSchema>;
 
 const IMPORTANCE = new Set(["LOW", "MEDIUM", "HIGH"]);
 const ASSUMPTION_STATUS = new Set([

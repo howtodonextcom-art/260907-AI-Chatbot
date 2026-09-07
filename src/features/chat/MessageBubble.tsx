@@ -7,6 +7,7 @@ const ROLE_COLOR: Record<string, string> = {
   ANALYST: "var(--analyst)",
   CRITIC: "var(--critic)",
   JUDGE: "var(--judge)",
+  SECOND_OPINION: "var(--second-opinion)",
   SYSTEM: "var(--text-muted)",
   TOOL: "var(--text-muted)",
 };

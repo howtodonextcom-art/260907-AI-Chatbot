@@ -10,6 +10,7 @@ export async function runCritic(args: {
     systemInstructions: string;
   };
   analystContent: string;
+  secondOpinionContent?: string;
   profile?: string;
 }): Promise<{
   content: string;
@@ -38,7 +39,14 @@ export async function runCritic(args: {
       ...args.request.messages,
       {
         role: "user",
-        content: `Analyst output to critique:\n${args.analystContent}`,
+        content: [
+          `Analyst output to critique:\n${args.analystContent}`,
+          args.secondOpinionContent
+            ? `Independent second opinion (different provider) to weigh against the Analyst:\n${args.secondOpinionContent}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       },
     ],
     metadata: {

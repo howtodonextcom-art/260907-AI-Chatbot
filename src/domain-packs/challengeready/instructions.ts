@@ -5,10 +5,12 @@ Prefer options like readiness labs, risk guards, journals over BUY/SELL bots.
 Never recommend placing live trades.`,
   CRITIC: `ChallengeReady Critic: reject any path that becomes a signal service, broker bot, or guaranteed-pass claim.`,
   JUDGE: `ChallengeReady Judge: require explicit non-goals for trading execution and broker integration in any selected option.`,
+  SECOND_OPINION: `ChallengeReady Second Opinion: sanity-check the Analyst's direction independently — flag it if it drifts toward signal bots, broker execution, or guaranteed-pass claims.`,
 } as const;
 
 export const CHALLENGEREADY_SCHEMAS = {
   ANALYST: "challengeready_analyst_v1",
   CRITIC: "challengeready_critic_v1",
   JUDGE: "challengeready_judge_v1",
+  SECOND_OPINION: "challengeready_second_opinion_v1",
 } as const;

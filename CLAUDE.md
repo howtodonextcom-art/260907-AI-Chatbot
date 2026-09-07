@@ -37,3 +37,36 @@ GIT_COMMITTER_EMAIL="howtodonext.com@gmail.com"
   deploy, bảo vệ state-machine/field-protection cho `sessions` chỉ có ở tầng
   API (đã đủ an toàn cho luồng hiện tại vì UI không ghi Firestore trực tiếp
   từ client), chưa có ở tầng Firestore rules trên project thật.
+
+## Quyết định kiến trúc: [[deepseek-second-opinion]] (2026-09-07)
+
+DEEP mode chạy **4 vai trò**, không phải 3 như spec v5 gốc: Analyst (Gemini)
+và SecondOpinion (DeepSeek) chạy **song song**, rồi Critic (Groq) → Judge
+(Gemini) — Critic và Judge đều nhận context của SecondOpinion, không chỉ của
+Analyst. Đây là lệch có chủ đích khỏi giới hạn "3 core agent roles" của spec
+v5, do người dùng chọn tường minh (không phải AI tự quyết định) sau khi được
+hỏi về đánh đổi chi phí/độ trễ.
+
+**Lý do tồn tại:** giảm thiên lệch một-nhà-cung-cấp (Gemini luôn đóng cả vai
+Analyst lẫn Judge) bằng một tiếng nói độc lập thật sự từ nhà API khác.
+`SecondOpinion.agreementScore` (0-1, DeepSeek tự chấm mức đồng ý với hướng
+Analyst) nuôi trực tiếp vào `confidence.factors.agentAgreement` khi duyệt
+quyết định (`decision-orchestrator.ts::approveDecision`), thay cho giá trị
+`0.7` hard-code trước đây — nghĩa là tính năng này thật sự ảnh hưởng tới
+heuristic confidence cuối cùng, không chỉ trang trí UI.
+
+**Ràng buộc quan trọng:** `runSecondOpinion` luôn gọi thẳng `"deepseek"` với
+`allowFallback: false` — nếu fallback về Gemini, nó sẽ so sánh Gemini với
+chính nó, vô nghĩa với mục đích "tiếng nói độc lập". Nếu DeepSeek lỗi/không
+cấu hình (`hasDeepseek=false`), toàn bộ bước này bị bỏ qua êm — DEEP vẫn chạy
+bình thường với 3 vai trò cũ, không có gì bắt buộc phải có DeepSeek.
+
+**Bài học vận hành:** DeepSeek có xu hướng trả lời dài hơn nhiều so với
+Gemini/Groq với cùng prompt. Với `outputSchemaName` (ép JSON mode) và
+`maxOutputTokens` thấp, JSON bị cắt cụt giữa chừng → `JSON.parse` luôn fail
+→ `structured` luôn `undefined` mà KHÔNG có lỗi nào lộ ra (AgentRun vẫn
+`COMPLETED`, `agentAgreement` âm thầm rơi về fallback `0.7`). Đã sửa bằng
+cách: (1) prompt yêu cầu `reply` ngắn gọn (3-4 câu), (2) tăng
+`maxOutputTokens` lên 2000 cho riêng SecondOpinion, (3) dùng `parseLooseJson`
+(có khả năng phục hồi JSON cụt) thay vì parse thô. Nếu sau này thêm role mới
+dùng DeepSeek cho output có cấu trúc, áp dụng lại cả 3 điểm này.

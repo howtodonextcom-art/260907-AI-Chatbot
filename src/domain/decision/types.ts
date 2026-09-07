@@ -21,7 +21,14 @@ export type EvidenceType =
 export type EvidenceReliability = "HIGH" | "MEDIUM" | "LOW";
 export type OptionStatus = "PROPOSED" | "SHORTLISTED" | "REJECTED" | "SELECTED";
 export type BlueprintStatus = "DRAFT" | "REVIEW" | "APPROVED" | "SUPERSEDED";
-export type AgentRole = "ANALYST" | "CRITIC" | "JUDGE";
+/**
+ * SECOND_OPINION is a deliberate deviation from spec v5's 3-role limit,
+ * chosen by the user: DeepSeek runs in parallel with Analyst in DEEP mode
+ * as an independent 4th voice, so Critic/Judge see two genuinely different
+ * providers' takes instead of just Gemini's. See CLAUDE.md for the tradeoff
+ * this accepts (extra cost/latency per DEEP round).
+ */
+export type AgentRole = "ANALYST" | "CRITIC" | "JUDGE" | "SECOND_OPINION";
 export type RouteMode = "QUICK" | "STANDARD" | "DEEP";
 export type RunStatus =
   | "QUEUED"
@@ -134,6 +141,8 @@ export interface JudgeDraft {
   unresolvedUnknownIds: string[];
   tradeoffs: string[];
   reviewTriggers: string[];
+  /** From SecondOpinion.agreementScore (DeepSeek vs Analyst), when it ran. */
+  secondOpinionAgreement?: number;
   confidenceLabel: "LOW" | "MEDIUM" | "HIGH";
   confidenceScore: number;
 }
