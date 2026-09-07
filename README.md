@@ -1,110 +1,77 @@
 # Layer A — AI Decision Lab
 
-Domain-agnostic **AI Decision Lab**: chat is the interaction surface; decision is the product.
+Chat is the interaction surface. **Decision is the product.**
 
-Baseline stack: Next.js App Router + TypeScript strict + Firebase Auth/Firestore + Gemini + Groq + Vercel.
+Canonical lifecycle: IDEA → PROBLEM → ASSUMPTIONS → OPTIONS → EVIDENCE → CRITIQUE → EXPERIMENT → DECISION → BLUEPRINT → IMPLEMENTATION.
+
+Baseline stack: Next.js App Router + TypeScript strict + Firebase Auth/Firestore + Gemini + Groq + optional DeepSeek + Vercel.
 
 Source of truth: `plan/26-09-07-layer-a-ai-decision-lab-coding-spec-v5.markdown`
+Operating rules: `CLAUDE.md`
 
-## Features (MVP)
+## Runtime (what the code actually does)
 
-- Workspace + DecisionSession CRUD (owner-scoped)
-- Streaming chat (SSE) with QUICK / STANDARD / DEEP routes
-- Bounded Analyst → Critic → Judge orchestration
-- Decision Canvas (assumptions, options, evidence, decision, blueprint)
-- Immutable DecisionRecord + Blueprint handoff
-- Model Gateway (Gemini + Groq), server-side keys only
-- ChallengeReady Domain Pack as optional reference adapter
-- Dual repositories: Firestore (connected) + memory store (local/tests)
+- **Login:** email/password Firebase Auth. Google Sign-In is not used. Dev Auth Bypass appears only when client Firebase is not configured and `DEV_AUTH_BYPASS=true` (never in production).
+- **Core agent roles:** Analyst, Critic, Judge.
+- **Optional independent reviewer:** SecondOpinion on DeepSeek (`ENABLE_SECOND_OPINION`, default on when DeepSeek is configured). It does **not** self-report agreement. Judge derives `agentAgreement` or marks it `UNAVAILABLE`.
+- **Routing:** QUICK/STANDARD = Analyst. DEEP is **intent-aware** — FRAME/OPTIONS = Analyst only; CRITIQUE = Critic (+ optional SecondOpinion); VERIFY = allowlisted tools; PREPARE_DECISION = Analyst + Critic + Judge. Auto-run is four steps, not 16 council calls.
+- **VERIFY:** deterministic tools (calculator) via DomainPack allowlist. User evidence cannot self-upgrade to VERIFIED/HIGH.
+- **DecisionRecord:** immutable, created only by explicit human approval after HardPolicyGate. `DECIDED` is not a client PATCH.
+- **Blueprint:** derived from the approved decision (no filler). Markdown export: `GET /api/sessions/:sessionId/blueprint/export`.
+- **Model Gateway:** Gemini + Groq + DeepSeek fallback. `USE_STUB_MODELS=true` for CI/E2E (no paid APIs).
 
 ## Local setup
 
-### Requirements
-
-- Node.js 22+ (project also runs on current LTS)
-- pnpm 10.15.0 (`npx pnpm@10.15.0` if global install is unavailable)
-
-### Install
+- Node.js 22+
+- pnpm 10.15.0 (`npx pnpm@10.15.0` if needed)
 
 ```bash
-npx pnpm@10.15.0 install
+npx pnpm@10.15.0 install --frozen-lockfile
 npx pnpm@10.15.0 prepare:env
 npx pnpm@10.15.0 dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-
-`prepare:env` creates `.env.local` from a template and maps keys from legacy `env.local` (`Gemini_API` / `Groq_API`) when present.
+Open [http://localhost:3000](http://localhost:3000). Never commit `.env.local` or `service.json`.
 
 ### Environment
-
-Copy `.env.example` → `.env.local`. Never commit secrets (`.env.local`, `service.json`).
 
 | Variable | Notes |
 |---|---|
 | `GEMINI_API_KEY` / `GROQ_API_KEY` / `DEEPSEEK_API_KEY` | Server only |
 | `NEXT_PUBLIC_FIREBASE_*` | Client Firebase config |
-| `FIREBASE_ADMIN_CREDENTIALS_PATH` / `GOOGLE_APPLICATION_CREDENTIALS` | Preferred Admin path to gitignored `service.json` |
-| `FIREBASE_ADMIN_PROJECT_ID` / `CLIENT_EMAIL` / `PRIVATE_KEY` | Fallback Admin cert (avoid committing) |
-| `USE_MEMORY_STORE=true` | Force in-memory repos (tests / offline) |
-| `DEV_AUTH_BYPASS=true` | Local auth bypass only when Firebase is **not** fully configured |
+| `FIREBASE_ADMIN_CREDENTIALS_PATH` | Preferred Admin path to gitignored `service.json` |
+| `USE_MEMORY_STORE=true` | In-memory repos (tests / offline). **Forbidden in production runtime** |
+| `DEV_AUTH_BYPASS=true` | Local bypass only when Firebase is not fully configured; off in production |
+| `ENABLE_SECOND_OPINION` | Optional DeepSeek reviewer (default on) |
+| `USE_STUB_MODELS` | CI/Playwright deterministic providers |
 
-### Connected mode (Firebase Auth + Firestore)
+### Connected mode
 
-1. Place a Firebase service account JSON at `./service.json` (gitignored).
-2. Fill `NEXT_PUBLIC_FIREBASE_*` in `.env.local` from the Firebase console web app config.
-3. Set:
-   - `FIREBASE_ADMIN_CREDENTIALS_PATH=./service.json`
-   - `GOOGLE_APPLICATION_CREDENTIALS=./service.json`
-   - `USE_MEMORY_STORE=false`
-   - `DEV_AUTH_BYPASS=false`
-4. In Firebase Console → Authentication → Sign-in method: enable **Google**.
-5. Add authorized domains (`localhost` for local).
-6. Deploy rules/indexes (optional but recommended):
+1. Place service account JSON at `./service.json` (gitignored).
+2. Fill `NEXT_PUBLIC_FIREBASE_*`.
+3. `USE_MEMORY_STORE=false`, `DEV_AUTH_BYPASS=false`.
+4. Firebase Console → Authentication → **Email/Password**.
+5. Authorize `localhost` and the Vercel domain.
 
-```bash
-firebase deploy --only firestore:rules,firestore:indexes
-```
+Firestore rules/indexes live in `src/infrastructure/firebase/rules/`. Production deploy may be **IAM-blocked** (`BLOCKED_EXTERNAL`) even when emulator tests pass.
 
-(`firebase.json` points at `src/infrastructure/firebase/rules/`.)
-
-7. Restart `pnpm dev`, open `/login`, sign in with Google.
-
-When Admin + client Firebase env are valid, the app runs **fail-closed**: memory store and auth bypass stay off unless you explicitly force `USE_MEMORY_STORE=true` (bypass is disabled while connected).
-
-### Memory / offline mode
-
-Set `USE_MEMORY_STORE=true` and (optionally) `DEV_AUTH_BYPASS=true` when Firebase is unavailable. Login page falls back to Dev Auth Bypass only if client Firebase is not configured.
-
-### Scripts
+## Scripts
 
 ```bash
-npx pnpm@10.15.0 lint
-npx pnpm@10.15.0 typecheck
-npx pnpm@10.15.0 test
-npx pnpm@10.15.0 verify:firebase
-npx pnpm@10.15.0 test:e2e
-npx pnpm@10.15.0 build
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:rules    # Firestore emulator
+pnpm test:e2e      # Playwright (stub models in CI)
+pnpm build
 ```
-
-## Deployment (Vercel)
-
-1. Push to GitHub (`feature/*` → PR → `main`)
-2. Import repo in Vercel
-3. Set production env vars (separate from preview). Prefer Admin cert env vars on Vercel; do **not** upload `service.json` to the repo.
-4. Deploy Preview on PR; Production from `main`
-5. Configure Firebase project (prefer separate prod project)
-6. Deploy Firestore rules from `src/infrastructure/firebase/rules/firestore.rules`
-
-Rollback: use Vercel previous deployment. Keep Firestore schema backward-compatible.
 
 ## Architecture notes
 
-- Domain code never imports Gemini/Groq SDKs
-- UI never imports provider SDKs
-- Repositories abstract Firestore (memory implementations for tests/local)
-- ChallengeReady is a Domain Pack — core runs without it
-- Firebase Admin SDK is server-only; client receives public config only
+- Domain/UI never import provider SDKs
+- All consequential status changes go through `gateStatusTransition()`
+- DomainPack hooks: criteria hydrate sessions; tools restrict VERIFY; output schema names map to real Zod schemas; evaluation suite ids select cases
+- Production cannot accidentally use MemoryStore (`USE_MEMORY_STORE=true` throws unless Next.js build phase)
 
 ## Disclaimer
 

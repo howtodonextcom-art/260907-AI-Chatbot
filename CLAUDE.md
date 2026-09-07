@@ -51,12 +51,10 @@ GIT_COMMITTER_EMAIL="howtodonext.com@gmail.com"
   bộ 14 rules test đều chạy thật qua emulator, không phải vấn đề chức năng —
   chỉ là nợ version cần cân nhắc khi nâng cấp `firebase` sau này.
 
-- **`next@15.5.7` có cảnh báo lỗ hổng bảo mật đã biết** (in ra khi
-  `pnpm install`: "This version has a security vulnerability... See
-  https://nextjs.org/blog/security-update-2025-12-11"). Chưa nâng cấp trong
-  phiên này vì ngoài phạm vi P0-01/02/03 đang sửa và nâng Next.js major/minor
-  có rủi ro breaking change cần test riêng — ghi nợ lại để xử lý có chủ đích,
-  không phải bị bỏ sót.
+- **`next@15.5.9`** is the patched 15.5.x line addressing CVE-2025-55184 / 55183 / 67779
+  (advisory https://nextjs.org/blog/security-update-2025-12-11). Stay on 15.5.x
+  unless a dedicated Next 16 migration is scheduled. Previous `15.5.7` warning
+  is resolved in-repo; production Vercel deploy still needs a push to `main`.
 
 ## Quyết định kiến trúc: [[deepseek-second-opinion]] (2026-09-07)
 
@@ -79,7 +77,9 @@ xem [[second-opinion-agreement-semantics]]. SecondOpinion KHÔNG còn tự chấ
 
 **Ràng buộc quan trọng:** `runSecondOpinion` luôn gọi thẳng `"deepseek"` với
 `allowFallback: false` — nếu fallback về Gemini, nó sẽ so sánh Gemini với
-chính nó, vô nghĩa với mục đích "tiếng nói độc lập". Nếu DeepSeek lỗi/không
+chính nó, vô nghĩa với mục đích "tiếng nói độc lập". SecondOpinion is
+**conditional** (`ENABLE_SECOND_OPINION`, CRITIQUE/PREPARE_DECISION, DeepSeek
+configured) — not every DEEP intent. Nếu DeepSeek lỗi/không
 cấu hình (`hasDeepseek=false`), toàn bộ bước này bị bỏ qua êm — DEEP vẫn chạy
 bình thường với 3 vai trò cũ, không có gì bắt buộc phải có DeepSeek.
 
