@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "prepare:env": "node scripts/prepare-env.mjs",
-    "verify:firebase": "node scripts/verify-firebase.mjs"
+    "verify:firebase": "node scripts/verify-firebase.mjs",
+    "firebase:authorize-domains": "node scripts/authorize-firebase-domains.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

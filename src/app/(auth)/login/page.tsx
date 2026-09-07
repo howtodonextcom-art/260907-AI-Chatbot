@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -8,45 +8,88 @@ import {
   isFirebaseClientConfigured,
 } from "@/infrastructure/firebase/client";
 import { setAuthToken } from "@/features/workspace/api-client";
+import { mapFirebaseAuthError } from "@/features/workspace/auth-errors";
 import { LabMark } from "@/components/ui/LabMark";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"signin" | "signup" | "dev" | null>(null);
   const firebaseReady = isFirebaseClientConfigured();
 
-  useEffect(() => {
-    if (!firebaseReady) {
-      setAuthToken("dev:dev-user-1");
-    }
-  }, [firebaseReady]);
-
-  async function continueDev() {
-    setAuthToken("dev:dev-user-1");
+  async function afterAuth(user: { getIdToken: () => Promise<string> }) {
+    const token = await user.getIdToken();
+    setAuthToken(token);
     router.push("/workspaces");
   }
 
-  async function signInGoogle() {
-    setBusy(true);
+  async function withAuth(
+    mode: "signin" | "signup",
+    action: (
+      auth: NonNullable<Awaited<ReturnType<typeof getClientAuth>>>
+    ) => Promise<void>
+  ) {
+    setBusy(mode);
     setError(null);
     try {
       const auth = await getClientAuth();
       if (!auth) {
         throw new Error("Firebase client chưa cấu hình");
       }
-      const { GoogleAuthProvider, signInWithPopup } = await import(
-        "firebase/auth"
-      );
-      const result = await signInWithPopup(auth, new GoogleAuthProvider());
-      const token = await result.user.getIdToken();
-      setAuthToken(token);
-      router.push("/workspaces");
+      await action(auth);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Đăng nhập thất bại");
+      const mapped = mapFirebaseAuthError(e);
+      const code =
+        typeof e === "object" && e && "code" in e
+          ? String((e as { code: string }).code)
+          : "unknown";
+      // #region agent log
+      fetch("http://127.0.0.1:7577/ingest/0ef3d92a-0efa-4ea4-af96-ee377e9604cb", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "166647",
+        },
+        body: JSON.stringify({
+          sessionId: "166647",
+          runId: "post-fix",
+          hypothesisId: "F",
+          location: "src/app/(auth)/login/page.tsx",
+          message: "auth attempt failed",
+          data: { mode, code, mapped: mapped.slice(0, 120) },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      setError(mapped);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
+  }
+
+  async function signInEmail(e: React.FormEvent) {
+    e.preventDefault();
+    await withAuth("signin", async (auth) => {
+      const { signInWithEmailAndPassword } = await import("firebase/auth");
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      await afterAuth(result.user);
+    });
+  }
+
+  async function signUpEmail() {
+    await withAuth("signup", async (auth) => {
+      const { createUserWithEmailAndPassword } = await import("firebase/auth");
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      await afterAuth(result.user);
+    });
+  }
+
+  async function continueDev() {
+    setBusy("dev");
+    setAuthToken("dev:dev-user-1");
+    router.push("/workspaces");
   }
 
   return (
@@ -58,22 +101,55 @@ export default function LoginPage() {
         </Link>
         <h1 className="type-title">Vào phòng Lab</h1>
         <p className="type-body-muted">
-          Xác thực để mở workspace và Decision Session. Môi trường local có thể
-          dùng Dev Auth Bypass khi chưa gắn Firebase.
+          Đăng nhập bằng email và mật khẩu để mở workspace và Decision Session.
         </p>
         {firebaseReady ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={signInGoogle}
-            className="lab-btn lab-btn-primary lab-cta-pulse"
-          >
-            {busy ? "Đang đăng nhập…" : "Tiếp tục với Google"}
-          </button>
+          <form onSubmit={signInEmail} className="grid gap-3">
+            <label className="grid gap-1 text-sm">
+              Email
+              <input
+                type="email"
+                required
+                autoComplete="email"
+                value={email}
+                onChange={(ev) => setEmail(ev.target.value)}
+                className="lab-input px-3 py-2"
+                placeholder="ban@example.com"
+              />
+            </label>
+            <label className="grid gap-1 text-sm">
+              Mật khẩu
+              <input
+                type="password"
+                required
+                minLength={6}
+                autoComplete="current-password"
+                value={password}
+                onChange={(ev) => setPassword(ev.target.value)}
+                className="lab-input px-3 py-2"
+                placeholder="Tối thiểu 6 ký tự"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={busy !== null}
+              className="lab-btn lab-btn-primary lab-cta-pulse"
+            >
+              {busy === "signin" ? "Đang đăng nhập…" : "Đăng nhập"}
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void signUpEmail()}
+              className="lab-btn"
+            >
+              {busy === "signup" ? "Đang tạo…" : "Tạo tài khoản"}
+            </button>
+          </form>
         ) : (
           <button
             type="button"
-            onClick={continueDev}
+            onClick={() => void continueDev()}
             className="lab-btn lab-btn-primary lab-cta-pulse"
           >
             Tiếp tục (Dev Auth Bypass)

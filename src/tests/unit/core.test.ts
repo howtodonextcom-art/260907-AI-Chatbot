@@ -23,6 +23,7 @@ import {
   resetMemoryDb,
 } from "@/infrastructure/repositories/memory-store";
 import { extractLastDebateRoles } from "@/features/chat/DebateTimeline";
+import { mapFirebaseAuthError } from "@/features/workspace/auth-errors";
 
 describe("state machine", () => {
   it("allows DISCOVERY → VALIDATING", () => {
@@ -204,3 +205,15 @@ describe("debate timeline", () => {
     expect(roles).toEqual(["ANALYST", "CRITIC"]);
   });
 });
+
+describe("mapFirebaseAuthError", () => {
+  it("explains unauthorized-domain", () => {
+    expect(
+      mapFirebaseAuthError({
+        code: "auth/unauthorized-domain",
+        message: "Firebase: Error (auth/unauthorized-domain).",
+      })
+    ).toMatch(/Authorized domains/i);
+  });
+});
+
