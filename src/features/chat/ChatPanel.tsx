@@ -21,8 +21,11 @@ export function ChatPanel(props: {
   streamingRole?: string | null;
   running: boolean;
   routeMode: RouteMode;
-  onSend: (content: string) => Promise<void>;
+  onSend: (content: string) => Promise<unknown>;
   onStop: () => void;
+  onAutoRun?: (content: string) => Promise<void>;
+  autoRunning?: boolean;
+  autoStepLabel?: string | null;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState("");
@@ -38,9 +41,16 @@ export function ChatPanel(props: {
 
   async function handleSend() {
     const content = draft.trim();
-    if (!content || props.running) return;
+    if (!content || props.running || props.autoRunning) return;
     setDraft("");
     await props.onSend(content);
+  }
+
+  async function handleAutoRun() {
+    const content = draft.trim();
+    if (!content || props.running || props.autoRunning || !props.onAutoRun) return;
+    setDraft("");
+    await props.onAutoRun(content);
   }
 
   const emptyDescription =
@@ -107,6 +117,9 @@ export function ChatPanel(props: {
         onStop={props.onStop}
         running={props.running}
         routeMode={props.routeMode}
+        onAutoRun={props.onAutoRun ? handleAutoRun : undefined}
+        autoRunning={props.autoRunning}
+        autoStepLabel={props.autoStepLabel}
       />
     </section>
   );

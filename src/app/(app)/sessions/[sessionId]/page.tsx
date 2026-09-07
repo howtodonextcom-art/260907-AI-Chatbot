@@ -43,7 +43,10 @@ export default function SessionPage() {
   const [partial, setPartial] = useState(false);
   const [running, setRunning] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoStepLabel, setAutoStepLabel] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const stoppedRef = useRef(false);
 
   const loadAll = useCallback(async () => {
     const s = await apiFetch<{ session: DecisionSession }>(
@@ -72,6 +75,7 @@ export default function SessionPage() {
     setDecision(dec.decision);
     setBlueprint(bp.blueprint);
     setSessions(list.sessions);
+    return s.session;
   }, [sessionId]);
 
   useEffect(() => {
@@ -85,12 +89,16 @@ export default function SessionPage() {
     [runs, costUsd]
   );
 
-  async function sendMessage(content: string) {
+  async function sendMessage(
+    content: string,
+    overrides?: { routeMode?: RouteMode; intent?: Intent }
+  ): Promise<{ status: DecisionSession["status"]; failed: boolean }> {
     setError(null);
     setPartial(false);
     setStreamingText("");
     setStreamingRole(null);
     setRunning(true);
+    let failed = false;
     try {
       const created = await apiFetch<{ message: Message }>(
         `/api/sessions/${sessionId}/messages`,
@@ -107,8 +115,8 @@ export default function SessionPage() {
           Authorization: `Bearer ${token ?? ""}`,
         },
         body: JSON.stringify({
-          routeMode,
-          intent,
+          routeMode: overrides?.routeMode ?? routeMode,
+          intent: overrides?.intent ?? intent,
           messageId: created.message.id,
         }),
         signal: abortRef.current.signal,
@@ -215,27 +223,91 @@ export default function SessionPage() {
             setError(String(data.message ?? "Run failed"));
             setAgentStatus(null);
             setStreamingRole(null);
+            failed = true;
           }
         }
       }
 
-      await loadAll();
+      const refreshed = await loadAll();
       setStreamingText("");
       setStreamingRole(null);
+      return { status: refreshed?.status ?? "DISCOVERY", failed };
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         setError(e instanceof Error ? e.message : "Gửi thất bại");
       }
+      return { status: session?.status ?? "DISCOVERY", failed: true };
     } finally {
       setRunning(false);
     }
   }
 
   function stop() {
+    stoppedRef.current = true;
     abortRef.current?.abort();
     setRunning(false);
     setAgentStatus(null);
     setStreamingRole(null);
+  }
+
+  const AUTO_STEPS: Array<{
+    intent: Intent;
+    label: string;
+    followup?: string;
+  }> = [
+    { intent: "FRAME_PROBLEM", label: "Định khung" },
+    {
+      intent: "GENERATE_OPTIONS",
+      label: "Sinh phương án",
+      followup:
+        "Hãy đề xuất các phương án khả thi dựa trên khung vấn đề vừa xác định.",
+    },
+    {
+      intent: "CRITIQUE",
+      label: "Phản biện",
+      followup:
+        "Hãy phản biện các phương án đã đề xuất, chỉ ra rủi ro và giả định chưa được kiểm chứng.",
+    },
+    {
+      intent: "VERIFY",
+      label: "Xác minh",
+      followup: "Hãy xác minh các giả định hoặc claim quan trọng nếu có thể.",
+    },
+  ];
+
+  /**
+   * Runs FRAME_PROBLEM → GENERATE_OPTIONS → CRITIQUE → VERIFY back-to-back in
+   * DEEP mode, stopping as soon as the session reaches DECISION_READY (or
+   * DECIDED) so a human still explicitly approves — this never auto-decides.
+   * Always DEEP: CRITIQUE/PREPARE_DECISION-adjacent intents only invoke
+   * Critic/Judge in DEEP mode (see routing-policy.ts), so QUICK/STANDARD
+   * would silently skip the parts of this sequence that matter.
+   */
+  async function runAutoWorkflow(seedContent: string) {
+    if (!seedContent.trim() || running || autoRunning) return;
+    stoppedRef.current = false;
+    setAutoRunning(true);
+    setRouteMode("DEEP");
+    try {
+      for (let i = 0; i < AUTO_STEPS.length; i += 1) {
+        if (stoppedRef.current) break;
+        const step = AUTO_STEPS[i];
+        setIntent(step.intent);
+        setAutoStepLabel(`${step.label} (${i + 1}/${AUTO_STEPS.length})`);
+        const content = i === 0 ? seedContent : (step.followup ?? seedContent);
+        const result = await sendMessage(content, {
+          routeMode: "DEEP",
+          intent: step.intent,
+        });
+        if (stoppedRef.current || result.failed) break;
+        if (result.status === "DECISION_READY" || result.status === "DECIDED") {
+          break;
+        }
+      }
+    } finally {
+      setAutoRunning(false);
+      setAutoStepLabel(null);
+    }
   }
 
   async function approveDecision() {
@@ -366,6 +438,9 @@ export default function SessionPage() {
           routeMode={routeMode}
           onSend={sendMessage}
           onStop={stop}
+          onAutoRun={runAutoWorkflow}
+          autoRunning={autoRunning}
+          autoStepLabel={autoStepLabel}
         />
 
         <div

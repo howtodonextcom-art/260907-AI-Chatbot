@@ -15,10 +15,14 @@ export function Composer(props: {
   onStop: () => void;
   running: boolean;
   routeMode?: RouteMode;
+  onAutoRun?: () => void;
+  autoRunning?: boolean;
+  autoStepLabel?: string | null;
 }) {
   const modeHint = props.routeMode
     ? FOOTER_BY_MODE[props.routeMode]
     : null;
+  const busy = props.running || Boolean(props.autoRunning);
 
   return (
     <div
@@ -43,7 +47,7 @@ export function Composer(props: {
             }
           }}
         />
-        {props.running ? (
+        {busy ? (
           <button
             type="button"
             onClick={props.onStop}
@@ -53,21 +57,34 @@ export function Composer(props: {
             Dừng
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={() => void props.onSend()}
-            className="lab-btn lab-btn-primary min-h-[56px] px-4 text-sm"
-          >
-            Gửi
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => void props.onSend()}
+              className="lab-btn lab-btn-primary min-h-[56px] px-4 text-sm"
+            >
+              Gửi
+            </button>
+            {props.onAutoRun ? (
+              <button
+                type="button"
+                onClick={props.onAutoRun}
+                className="lab-btn min-h-[56px] px-3 text-sm"
+                title="Tự động chạy Định khung → Sinh phương án → Phản biện → Xác minh (DEEP), dừng khi tới Decision Ready"
+              >
+                ▶ Tự động 4 bước
+              </button>
+            ) : null}
+          </>
         )}
       </div>
       <p
         className="mx-auto mt-1.5 max-w-3xl text-xs"
         style={{ color: "var(--text-muted)" }}
       >
-        Enter để gửi · Shift+Enter xuống dòng
-        {modeHint ? ` · ${modeHint}` : ""}
+        {props.autoRunning && props.autoStepLabel
+          ? `Đang tự động chạy: ${props.autoStepLabel} — bấm Dừng để huỷ.`
+          : `Enter để gửi · Shift+Enter xuống dòng${modeHint ? ` · ${modeHint}` : ""}`}
       </p>
     </div>
   );
