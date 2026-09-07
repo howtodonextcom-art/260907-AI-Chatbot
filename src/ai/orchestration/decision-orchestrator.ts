@@ -25,11 +25,55 @@ import type {
 import type { Repositories } from "@/infrastructure/repositories";
 import { logStructured } from "@/infrastructure/logging/logger";
 import {
-  canEnterDecisionReady,
-  canTransition,
+  gateStatusTransition,
+  type GatedTransitionContext,
 } from "@/domain/decision/state-machine";
 import { AppError, humanizeProviderError } from "@/infrastructure/api/errors";
 import { parseLooseJson } from "@/ai/agents/schemas";
+
+/**
+ * Transparent, documented heuristic mapping — not statistical precision.
+ * Judge assigns the label after seeing both Analyst's and SecondOpinion's
+ * real output; this only converts that label to the numeric confidence
+ * factor scale (0-1) used by calculateHeuristicConfidence.
+ */
+export const AGREEMENT_LABEL_TO_SCORE: Record<"LOW" | "MEDIUM" | "HIGH", number> = {
+  LOW: 0.25,
+  MEDIUM: 0.6,
+  HIGH: 0.9,
+};
+
+/** Neutral (not confidently-good) default when no agreement signal exists. */
+export const AGREEMENT_UNAVAILABLE_SCORE = 0.5;
+
+/**
+ * Pure, independently-testable derivation of the agentAgreement fields from
+ * Judge's structured output. Judge is the only agent that has seen both
+ * Analyst's and SecondOpinion's real output, so its secondOpinionAgreement
+ * label is the ONLY legitimate source for this signal — never a self-report
+ * from SecondOpinion, which never saw Analyst's output (see CLAUDE.md
+ * [[second-opinion-agreement-semantics]]). Returns UNAVAILABLE (not a fake
+ * default) whenever Judge omitted it — no second opinion ran, or Judge's
+ * structured output itself failed to parse.
+ */
+export function deriveAgentAgreement(
+  secondOpinionAgreement:
+    | { label: "LOW" | "MEDIUM" | "HIGH"; rationale: string }
+    | undefined
+): {
+  agentAgreement?: number;
+  agentAgreementMethod: "JUDGE_HEURISTIC" | "UNAVAILABLE";
+  agentAgreementRationale?: string;
+} {
+  if (!secondOpinionAgreement) {
+    return { agentAgreementMethod: "UNAVAILABLE" };
+  }
+  return {
+    agentAgreement: AGREEMENT_LABEL_TO_SCORE[secondOpinionAgreement.label],
+    agentAgreementMethod: "JUDGE_HEURISTIC",
+    agentAgreementRationale: secondOpinionAgreement.rationale,
+  };
+}
 
 export type SseEventName =
   | "run.started"
@@ -134,7 +178,6 @@ export async function* runDecisionOrchestrator(args: {
   let analystContent = "";
   let criticContent: string | undefined;
   let secondOpinionContent: string | undefined;
-  let secondOpinionAgreement: number | undefined;
   let partial = false;
   let sessionPatch: Partial<DecisionSession> = {};
   let totalCost = 0;
@@ -328,7 +371,6 @@ export async function* runDecisionOrchestrator(args: {
         secondOpinion.structured?.reply ??
         extractReply(secondOpinion.content) ??
         secondOpinion.content;
-      secondOpinionAgreement = secondOpinion.structured?.agreementScore;
 
       recordUsage(tracker, {
         inputTokens: secondOpinion.usage.inputTokens,
@@ -647,7 +689,7 @@ export async function* runDecisionOrchestrator(args: {
               .map((u) => u.id),
             tradeoffs: judge.structured.tradeoffs,
             reviewTriggers: judge.structured.reviewTriggers,
-            secondOpinionAgreement,
+            ...deriveAgentAgreement(judge.structured.secondOpinionAgreement),
             confidenceLabel: judge.structured.confidenceLabel,
             confidenceScore: judge.structured.confidenceScore,
           };
@@ -660,23 +702,31 @@ export async function* runDecisionOrchestrator(args: {
           const highPriorityOpenUnknowns = mergedUnknowns.filter(
             (u) => u.importance === "HIGH" && u.resolution === "OPEN"
           ).length;
-          const ready = canEnterDecisionReady({
-            optionCount: mergedOptions.length,
-            assumptionCount: mergedAssumptions.length,
-            highPriorityOpenUnknowns,
-            // domainChecks already gated this run at entry (see above); no
-            // additional domain validation errors can exist at this point.
-            domainValidationErrors: [],
-          });
-          if (
-            judge.structured.decision !== "INSUFFICIENT_EVIDENCE" &&
-            ready &&
-            canTransition(
+          if (judge.structured.decision !== "INSUFFICIENT_EVIDENCE") {
+            const gated = gateStatusTransition(
               sessionPatch.status ?? args.session.status,
-              "DECISION_READY"
-            )
-          ) {
-            sessionPatch.status = "DECISION_READY";
+              "DECISION_READY",
+              {
+                problem: args.session.problem,
+                objective: args.session.objective,
+                optionCount: mergedOptions.length,
+                assumptionCount: mergedAssumptions.length,
+                highPriorityOpenUnknowns,
+                // domainChecks already gated this run at entry (see above);
+                // no additional domain validation errors can exist here.
+                domainValidationErrors: [],
+              }
+            );
+            if (gated.applied) {
+              sessionPatch.status = gated.status;
+            } else if (gated.reason) {
+              logStructured("info", "transition.rejected", {
+                sessionId: args.session.id,
+                proposedBy: "JUDGE",
+                to: "DECISION_READY",
+                reason: gated.reason,
+              });
+            }
           }
         }
 
@@ -774,7 +824,7 @@ export async function* runDecisionOrchestrator(args: {
   };
 }
 
-function applyAnalystState(
+export function applyAnalystState(
   session: DecisionSession,
   structured: {
     assumptions: Array<{
@@ -844,22 +894,47 @@ function applyAnalystState(
     })),
   ];
 
+  // AI may PROPOSE a transition (suggestedStatus); only gateStatusTransition
+  // may AUTHORIZE one. Analyst structured output alone must never be able
+  // to move a session into DECISION_READY without meeting the real
+  // requirements — see CLAUDE.md [[transition-gate-unification]].
+  const gateCtx: GatedTransitionContext = {
+    problem: session.problem,
+    objective: session.objective,
+    optionCount: options.length,
+    assumptionCount: assumptions.length,
+    highPriorityOpenUnknowns: unknowns.filter(
+      (u) => u.importance === "HIGH" && u.resolution === "OPEN"
+    ).length,
+    domainValidationErrors: [],
+    userAskedGenerateOptions: intent === "GENERATE_OPTIONS",
+  };
+
   let status = session.status;
   const suggested = structured.suggestedStatus;
-  if (suggested && canTransition(status, suggested)) {
-    status = suggested;
-  } else if (
-    intent === "GENERATE_OPTIONS" &&
-    options.length > 0 &&
-    canTransition(status, "VALIDATING")
+  if (suggested) {
+    const gated = gateStatusTransition(status, suggested, gateCtx);
+    if (gated.applied) {
+      status = gated.status;
+    } else if (gated.reason) {
+      logStructured("info", "transition.rejected", {
+        sessionId: session.id,
+        proposedBy: "ANALYST",
+        from: status,
+        to: suggested,
+        reason: gated.reason,
+      });
+    }
+  }
+  if (
+    status === session.status &&
+    (intent === "GENERATE_OPTIONS" || intent === "FRAME_PROBLEM")
   ) {
-    status = "VALIDATING";
-  } else if (
-    intent === "FRAME_PROBLEM" &&
-    canTransition(status, "VALIDATING") &&
-    session.objective
-  ) {
-    status = "VALIDATING";
+    // Analyst didn't propose an accepted transition — still allow the
+    // conservative default advance to VALIDATING, but only through the
+    // same gate (requires problem+objective, and options when required).
+    const gated = gateStatusTransition(status, "VALIDATING", gateCtx);
+    if (gated.applied) status = gated.status;
   }
 
   return {
@@ -966,6 +1041,10 @@ export async function approveDecision(args: {
         agentAgreement: 0.6,
         experimentStrength: 0.3,
       },
+      // Placeholder for the pre-approval domain-validation gate only; the
+      // real confidence (with the real method/rationale) is computed below
+      // and this provisional object is discarded before persistence.
+      agentAgreementMethod: "UNAVAILABLE" as const,
     },
     reviewTriggers: draft.reviewTriggers,
     approvedBy: args.ownerId,
@@ -1006,10 +1085,12 @@ export async function approveDecision(args: {
       draft.unresolvedUnknownIds.length / 5
     ),
     assumptionPenalty: Math.min(1, args.session.assumptions.length / 10),
-    // Real signal when DeepSeek's independent second opinion ran (DEEP mode
-    // only); 0.7 fallback (unmeasured-but-assumed-reasonable) when it
-    // didn't, matching the previous hard-coded default.
-    agentAgreement: draft.secondOpinionAgreement ?? 0.7,
+    // Judge's HEURISTIC assessment after seeing both Analyst's and
+    // SecondOpinion's real output (JUDGE_HEURISTIC), or a neutral
+    // "unmeasured" 0.5 — never a fake-confident default — when no second
+    // opinion was available for this run. See CLAUDE.md
+    // [[second-opinion-agreement-semantics]].
+    agentAgreement: draft.agentAgreement ?? AGREEMENT_UNAVAILABLE_SCORE,
     experimentStrength: 0.2,
   });
 
@@ -1052,7 +1133,11 @@ export async function approveDecision(args: {
   const record = await args.repos.decisionRecords.create({
     ...provisionalWithoutId,
     id: recordId,
-    confidence,
+    confidence: {
+      ...confidence,
+      agentAgreementMethod: draft.agentAgreementMethod,
+      agentAgreementRationale: draft.agentAgreementRationale,
+    },
     supersedesDecisionRecordId: previous?.id,
   });
 

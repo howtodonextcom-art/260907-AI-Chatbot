@@ -23,7 +23,10 @@ GIT_COMMITTER_EMAIL="howtodonext.com@gmail.com"
 
 - **Firestore rules/indexes chưa deploy lên project thật (`chatai-62ca2`).**
   File `src/infrastructure/firebase/rules/firestore.rules` và
-  `firestore.indexes.json` đã đúng và test qua Admin SDK/API layer, nhưng
+  `firestore.indexes.json` đã đúng — bao gồm fix P0-03 (bất biến `ownerId`
+  trên `workspaces`) — và được test thật qua Firestore Emulator
+  (`pnpm test:rules`, xem [[firestore-rules-testing]]), không chỉ qua
+  Admin SDK/API layer. Nhưng
   `firebase deploy --only firestore:rules,firestore:indexes` bị chặn 403
   ("The caller does not have permission") vì service account trong
   `service.json` thiếu quyền IAM `Firebase Rules Admin` /
@@ -34,9 +37,26 @@ GIT_COMMITTER_EMAIL="howtodonext.com@gmail.com"
   Console IAM, HOẶC chạy `firebase login` bằng tài khoản có quyền
   Owner/Editor trên `chatai-62ca2` rồi tự deploy
   (`firebase deploy --project chatai-62ca2 --only firestore`). Cho đến khi
-  deploy, bảo vệ state-machine/field-protection cho `sessions` chỉ có ở tầng
-  API (đã đủ an toàn cho luồng hiện tại vì UI không ghi Firestore trực tiếp
-  từ client), chưa có ở tầng Firestore rules trên project thật.
+  deploy, bảo vệ state-machine/field-protection cho `sessions` và bất biến
+  `ownerId` cho `workspaces` chỉ có hiệu lực thật ở tầng API + emulator test
+  (đã đủ an toàn cho luồng hiện tại vì UI không ghi Firestore trực tiếp từ
+  client), CHƯA có hiệu lực ở tầng Firestore rules trên project thật —
+  nghĩa là nếu có ai ghi thẳng vào Firestore production (bỏ qua API), rules
+  cũ (không có bất biến `ownerId`) vẫn đang chạy ở đó cho tới khi deploy.
+
+- **`@firebase/rules-unit-testing` ghim ở v4.0.1, không phải bản mới nhất
+  (v5.0.2).** Bản v5 yêu cầu peer dep `firebase@^12.0.0`, nhưng repo đang ở
+  `firebase@^11.10.0` — nâng cấp `firebase` lên v12 ngoài phạm vi các P0 đang
+  sửa nên không tự ý làm. v4.0.1 tương thích đúng peer dep hiện tại và toàn
+  bộ 14 rules test đều chạy thật qua emulator, không phải vấn đề chức năng —
+  chỉ là nợ version cần cân nhắc khi nâng cấp `firebase` sau này.
+
+- **`next@15.5.7` có cảnh báo lỗ hổng bảo mật đã biết** (in ra khi
+  `pnpm install`: "This version has a security vulnerability... See
+  https://nextjs.org/blog/security-update-2025-12-11"). Chưa nâng cấp trong
+  phiên này vì ngoài phạm vi P0-01/02/03 đang sửa và nâng Next.js major/minor
+  có rủi ro breaking change cần test riêng — ghi nợ lại để xử lý có chủ đích,
+  không phải bị bỏ sót.
 
 ## Quyết định kiến trúc: [[deepseek-second-opinion]] (2026-09-07)
 
@@ -49,11 +69,13 @@ hỏi về đánh đổi chi phí/độ trễ.
 
 **Lý do tồn tại:** giảm thiên lệch một-nhà-cung-cấp (Gemini luôn đóng cả vai
 Analyst lẫn Judge) bằng một tiếng nói độc lập thật sự từ nhà API khác.
-`SecondOpinion.agreementScore` (0-1, DeepSeek tự chấm mức đồng ý với hướng
-Analyst) nuôi trực tiếp vào `confidence.factors.agentAgreement` khi duyệt
-quyết định (`decision-orchestrator.ts::approveDecision`), thay cho giá trị
-`0.7` hard-code trước đây — nghĩa là tính năng này thật sự ảnh hưởng tới
-heuristic confidence cuối cùng, không chỉ trang trí UI.
+Agreement giữa SecondOpinion và Analyst được đưa vào
+`confidence.factors.agentAgreement` khi duyệt quyết định
+(`decision-orchestrator.ts::approveDecision`) — nghĩa là tính năng này thật
+sự ảnh hưởng tới heuristic confidence cuối cùng, không chỉ trang trí UI.
+**Lưu ý:** cơ chế tính `agentAgreement` đã đổi hoàn toàn kể từ fix P0-02 —
+xem [[second-opinion-agreement-semantics]]. SecondOpinion KHÔNG còn tự chấm
+điểm đồng ý (field `agreementScore` đã bị xoá khỏi schema).
 
 **Ràng buộc quan trọng:** `runSecondOpinion` luôn gọi thẳng `"deepseek"` với
 `allowFallback: false` — nếu fallback về Gemini, nó sẽ so sánh Gemini với
@@ -70,3 +92,99 @@ cách: (1) prompt yêu cầu `reply` ngắn gọn (3-4 câu), (2) tăng
 `maxOutputTokens` lên 2000 cho riêng SecondOpinion, (3) dùng `parseLooseJson`
 (có khả năng phục hồi JSON cụt) thay vì parse thô. Nếu sau này thêm role mới
 dùng DeepSeek cho output có cấu trúc, áp dụng lại cả 3 điểm này.
+
+## Fix bảo mật: [[transition-gate-unification]] — P0-01 (2026-09-07)
+
+**Lỗ hổng:** `applyAnalystState()` trong `decision-orchestrator.ts` từng áp
+dụng `structured.suggestedStatus` (một field do LLM Analyst tự sinh ra, có
+thể bị prompt injection thao túng) trực tiếp bằng `canTransition()` — hàm
+này CHỈ kiểm tra cạnh chuyển trạng thái có hợp lệ về mặt cấu trúc (vd.
+`DISCOVERY → VALIDATING` là cạnh hợp lệ), KHÔNG kiểm tra các điều kiện nội
+dung (`canEnterValidating`, `canEnterDecisionReady`). Nghĩa là Analyst có
+thể tự đề xuất `suggestedStatus: "DECISION_READY"` ngay cả khi session chưa
+có option/assumption nào, và session sẽ bị đẩy thẳng vào DECISION_READY —
+bỏ qua toàn bộ gate nội dung, dù API PATCH (`route.ts`) vẫn kiểm tra gate
+đầy đủ khi CLIENT gọi trực tiếp.
+
+**Fix:** tạo duy nhất MỘT hàm thẩm quyền chuyển trạng thái —
+`gateStatusTransition()` trong `state-machine.ts` — bọc `canTransition` +
+`canEnterValidating` + `canEnterDecisionReady` + chặn cứng `DECIDED` (chỉ
+`approveDecision()` sau `HardPolicyGate` mới được gán `DECIDED`). Cả 3 nơi
+từng tự ý quyết định chuyển trạng thái (Analyst-suggested trong
+orchestrator, Judge-triggered trong orchestrator, client PATCH trong
+`route.ts`) giờ đều gọi qua đúng MỘT hàm này — không còn đường tắt nào.
+
+**Test:** `src/tests/unit/transition-gate.test.ts` (9 test) — cố tình mô
+phỏng Analyst gửi `suggestedStatus=DECISION_READY` khi thiếu điều kiện,
+xác nhận bị từ chối và log `transition.rejected`; xác nhận vẫn cho qua khi
+điều kiện thật sự đủ.
+
+## Fix bảo mật: [[second-opinion-agreement-semantics]] — P0-02 (2026-09-07)
+
+**Lỗ hổng ngữ nghĩa:** `SecondOpinion` (DeepSeek) chạy SONG SONG với
+Analyst — theo thiết kế, nó không hề thấy output của Analyst khi tạo ra
+câu trả lời của chính nó. Nhưng schema cũ yêu cầu nó tự báo cáo
+`agreesWithAnalyst`/`agreementScore` — một con số nó KHÔNG THỂ tính đúng vì
+chưa từng đọc thứ nó được yêu cầu so sánh. Giá trị này sau đó nuôi thẳng
+vào `confidence.factors.agentAgreement`, nghĩa là decision confidence cuối
+cùng dựa một phần vào một con số về mặt logic là vô nghĩa.
+
+**Fix:** xoá `agreesWithAnalyst`/`agreementScore` khỏi
+`SecondOpinionOutputSchema` — SecondOpinion giờ chỉ báo cáo nhận định độc
+lập của chính nó (`recommendedDirection`, `preferredOptionTitle`,
+`keyAssumptions`, `divergentRisks`). Judge — agent DUY NHẤT thực sự nhìn
+thấy cả output Analyst lẫn SecondOpinion — giờ chịu trách nhiệm đánh giá
+mức đồng thuận qua field mới `JudgeOutputSchema.secondOpinionAgreement`
+(label LOW/MEDIUM/HIGH + rationale), bỏ qua hoàn toàn nếu không có
+SecondOpinion trong lượt chạy đó (không đoán bừa). Hàm thuần
+`deriveAgentAgreement()` (exported từ `decision-orchestrator.ts`) chuyển
+label → số (`AGREEMENT_LABEL_TO_SCORE`) và gắn `agentAgreementMethod:
+"JUDGE_HEURISTIC" | "UNAVAILABLE"` để phân biệt "được suy luận thật" với
+"không có dữ liệu" — không còn giá trị `0.7` hard-code ngụy trang thành dữ
+liệu thật.
+
+**Test:** `src/tests/unit/second-opinion.test.ts` (16 test) — bao phủ:
+schema mới không còn field cũ, `JudgeOutputSchema.secondOpinionAgreement`
+hợp lệ ở cả 2 nhãn LOW/HIGH và bị từ chối khi label sai, `deriveAgentAgreement`
+cho 5 tình huống (đồng thuận cao, đồng thuận thấp, không có second opinion,
+second opinion lỗi/không chạy, Judge structured parse thất bại) đều trả về
+đúng `agentAgreementMethod`.
+
+## Fix bảo mật: workspace ownerId immutability — P0-03 (2026-09-07)
+
+**Lỗ hổng:** rule Firestore cho `workspaces/{workspaceId}` chỉ có
+`allow read, update: if isOwner(resource.data.ownerId)` — kiểm tra owner
+HIỆN TẠI được phép ghi, nhưng không kiểm tra `ownerId` sau khi ghi có đổi
+hay không. Một client ghi thẳng Firestore (bỏ qua API) có thể tự đổi
+`ownerId` của workspace mình đang sở hữu sang uid khác — về lý thuyết là
+một đường "chuyển nhượng"/hijack workspace không qua kiểm soát nào.
+Sub-collection `sessions` đã có bất biến này từ trước (dòng
+`request.resource.data.ownerId == resource.data.ownerId`), nhưng
+`workspaces` ở cấp cha thì chưa.
+
+**Fix:** thêm đúng bất biến đó vào rule `update` của `workspaces` —
+xem `src/infrastructure/firebase/rules/firestore.rules`.
+
+**Verify (không chỉ tin, đã kiểm tra thật):** viết
+`src/tests/rules/firestore.rules.test.ts` (14 test, chạy qua Firestore
+Emulator thật — `pnpm test:rules`, xem [[firestore-rules-testing]]) rồi cố
+tình revert fix để xác nhận ĐÚNG MỘT test đó fail (không phải test tự pass
+vô nghĩa) — sau đó khôi phục fix và xác nhận cả 14 test xanh trở lại. Nợ
+deploy rules lên production vẫn còn (xem mục Nợ kỹ thuật — IAM blocker).
+
+## Hạ tầng test: [[firestore-rules-testing]] (2026-09-07)
+
+`pnpm test:rules` chạy `firebase emulators:exec --only firestore` bọc
+`vitest run --config vitest.rules.config.ts` — spin lên Firestore Emulator
+thật (port 8080, cấu hình ở `firebase.json`), nạp đúng file
+`firestore.rules` đang dùng, rồi chạy test dùng
+`@firebase/rules-unit-testing` (`initializeTestEnvironment`,
+`assertSucceeds`/`assertFails`, `withSecurityRulesDisabled` để seed dữ liệu
+test bỏ qua rules). Tách khỏi `pnpm test` (vitest.config.ts chỉ include
+`src/tests/unit` + `src/tests/integration`) vì cần một process emulator
+thật, không chỉ Node — không nên bắt buộc mọi lần chạy `pnpm test` phải có
+Java/emulator sẵn sàng.
+
+**Version note:** ghim `@firebase/rules-unit-testing@^4.0.1` (không phải
+`^5.x` mới nhất) vì `firebase` trong repo đang ở `^11.10.0` và v5 đòi peer
+dep `firebase@^12.0.0`. Xem mục Nợ kỹ thuật.

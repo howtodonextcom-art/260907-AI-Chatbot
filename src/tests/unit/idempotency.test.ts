@@ -45,6 +45,7 @@ describe("decision record immutability pattern", () => {
           agentAgreement: 0.5,
           experimentStrength: 0.2,
         },
+        agentAgreementMethod: "UNAVAILABLE",
       },
       reviewTriggers: ["revisit later"],
       approvedBy: "u1",

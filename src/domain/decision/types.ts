@@ -141,8 +141,16 @@ export interface JudgeDraft {
   unresolvedUnknownIds: string[];
   tradeoffs: string[];
   reviewTriggers: string[];
-  /** From SecondOpinion.agreementScore (DeepSeek vs Analyst), when it ran. */
-  secondOpinionAgreement?: number;
+  /**
+   * Derived from Judge's HEURISTIC secondOpinionAgreement label (Judge is
+   * the only agent that has seen both Analyst's and SecondOpinion's actual
+   * output) — never a self-report from SecondOpinion itself, which never
+   * saw Analyst's output. See CLAUDE.md
+   * [[second-opinion-agreement-semantics]].
+   */
+  agentAgreement?: number;
+  agentAgreementMethod: "JUDGE_HEURISTIC" | "UNAVAILABLE";
+  agentAgreementRationale?: string;
   confidenceLabel: "LOW" | "MEDIUM" | "HIGH";
   confidenceScore: number;
 }
@@ -181,6 +189,9 @@ export interface DecisionRecord {
       agentAgreement: number;
       experimentStrength: number;
     };
+    /** How agentAgreement was derived — never fake statistical precision. */
+    agentAgreementMethod: "JUDGE_HEURISTIC" | "UNAVAILABLE";
+    agentAgreementRationale?: string;
   };
   reviewTriggers: string[];
   supersedesDecisionRecordId?: string;

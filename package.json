@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:rules": "firebase emulators:exec --only firestore \"vitest run --config vitest.rules.config.ts\"",
     "test:e2e": "playwright test",
     "prepare:env": "node scripts/prepare-env.mjs",
     "verify:firebase": "node scripts/verify-firebase.mjs",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
+    "@firebase/rules-unit-testing": "^4.0.1",
     "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4.1.12",
     "@testing-library/jest-dom": "^6.7.0",

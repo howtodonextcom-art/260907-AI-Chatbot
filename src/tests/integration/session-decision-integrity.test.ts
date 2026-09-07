@@ -193,6 +193,7 @@ describe("POST/PATCH /api/sessions/:id/blueprint — DRAFT lifecycle (Test F/G)"
         reviewTriggers: ["revisit if scope changes"],
         confidenceLabel: "MEDIUM",
         confidenceScore: 50,
+        agentAgreementMethod: "UNAVAILABLE" as const,
       },
     });
 
@@ -277,6 +278,7 @@ describe("idempotent decision approval (race safety)", () => {
         reviewTriggers: ["revisit if scope changes"],
         confidenceLabel: "MEDIUM",
         confidenceScore: 50,
+        agentAgreementMethod: "UNAVAILABLE" as const,
       },
     });
 

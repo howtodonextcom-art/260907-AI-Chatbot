@@ -84,15 +84,38 @@ export const JudgeOutputSchema = z.object({
   confidenceLabel: z.enum(["LOW", "MEDIUM", "HIGH"]).default("MEDIUM"),
   confidenceScore: z.number().min(0).max(100).default(50),
   unresolvedUnknowns: z.array(z.string()).default([]),
+  /**
+   * Judge is the only agent that has actually seen BOTH Analyst's and
+   * SecondOpinion's real output, so it is the only one qualified to assess
+   * whether they agree. Omitted when no second opinion was available for
+   * this run. See CLAUDE.md [[second-opinion-agreement-semantics]] — this
+   * replaces SecondOpinion self-reporting agreement with something it never
+   * actually saw.
+   */
+  secondOpinionAgreement: z
+    .object({
+      label: z.enum(["LOW", "MEDIUM", "HIGH"]),
+      rationale: z.string(),
+    })
+    .optional(),
 });
 
+/**
+ * SecondOpinion runs in PARALLEL with Analyst and therefore has not seen
+ * Analyst's output — it must report only its OWN independent take, never a
+ * self-assessed "agreement" with something it never read. Judge (which
+ * receives both) derives agreement afterward (JudgeOutputSchema.
+ * secondOpinionAgreement) — see CLAUDE.md
+ * [[second-opinion-agreement-semantics]].
+ */
 export const SecondOpinionOutputSchema = z.object({
   reply: z.string(),
-  agreesWithAnalyst: z.boolean().default(true),
-  /** 0 = fully disagrees, 1 = fully agrees. Feeds confidence.agentAgreement. */
-  agreementScore: z.number().min(0).max(1).default(0.5),
-  divergentPoints: z.array(z.string()).default([]),
+  recommendedDirection: z.string(),
+  preferredOptionTitle: z.string().optional(),
+  keyAssumptions: z.array(z.string()).default([]),
+  divergentRisks: z.array(z.string()).default([]),
   additionalRisks: z.array(z.string()).default([]),
+  confidenceLabel: z.enum(["LOW", "MEDIUM", "HIGH"]).default("MEDIUM"),
 });
 
 export type AnalystOutput = z.infer<typeof AnalystOutputSchema>;
