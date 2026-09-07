@@ -105,6 +105,18 @@ describe("routing", () => {
     expect(r.runJudge).toBe(false);
   });
 
+  it("DEEP FRAME_PROBLEM is Analyst only (not a full council)", () => {
+    const r = decideRouting({
+      routeMode: "DEEP",
+      intent: "FRAME_PROBLEM",
+      evidenceCoverage: 0.2,
+      importance: "MEDIUM",
+    });
+    expect(r.runAnalyst).toBe(true);
+    expect(r.runCritic).toBe(false);
+    expect(r.runJudge).toBe(false);
+  });
+
   it("DEEP can include critic and judge", () => {
     const r = decideRouting({
       routeMode: "DEEP",

@@ -39,6 +39,9 @@ const serverEnvSchema = z.object({
   ENABLE_CRITIC: boolFromEnv,
   ENABLE_JUDGE: boolFromEnv,
   ENABLE_CHALLENGEREADY_PACK: boolFromEnv,
+  ENABLE_SECOND_OPINION: boolFromEnv,
+  /** CI / Playwright: register stub providers, never call paid APIs. */
+  USE_STUB_MODELS: boolFromEnv,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema> & {
@@ -47,6 +50,8 @@ export type ServerEnv = z.infer<typeof serverEnvSchema> & {
   enableCritic: boolean;
   enableJudge: boolean;
   enableChallengeReadyPack: boolean;
+  enableSecondOpinion: boolean;
+  useStubModels: boolean;
   hasFirebaseAdmin: boolean;
   hasFirebaseClient: boolean;
   hasGemini: boolean;
@@ -98,6 +103,19 @@ export function getServerEnv(): ServerEnv {
 
   const connectedMode = hasFirebaseAdmin && hasFirebaseClient;
 
+  // next build sets NODE_ENV=production; NEXT_PHASE marks compile-only.
+  const isNextProductionBuild =
+    process.env.NEXT_PHASE === "phase-production-build";
+  if (
+    data.NODE_ENV === "production" &&
+    data.USE_MEMORY_STORE === true &&
+    !isNextProductionBuild
+  ) {
+    throw new Error(
+      "USE_MEMORY_STORE=true is forbidden in production runtime"
+    );
+  }
+
   // Fail-closed: memory store only when explicitly requested, or when Admin is missing (non-prod).
   const useMemoryStore =
     data.USE_MEMORY_STORE === true ||
@@ -116,6 +134,8 @@ export function getServerEnv(): ServerEnv {
     enableCritic: data.ENABLE_CRITIC !== false,
     enableJudge: data.ENABLE_JUDGE !== false,
     enableChallengeReadyPack: data.ENABLE_CHALLENGEREADY_PACK !== false,
+    enableSecondOpinion: data.ENABLE_SECOND_OPINION !== false,
+    useStubModels: data.USE_STUB_MODELS === true,
     hasFirebaseAdmin,
     hasFirebaseClient,
     hasGemini: Boolean(data.GEMINI_API_KEY),

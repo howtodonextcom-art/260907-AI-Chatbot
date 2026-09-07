@@ -15,8 +15,8 @@ const MODE_HINT: Record<
     debate: "Không Critic/Judge — chọn DEEP để tranh luận",
   },
   DEEP: {
-    pipeline: "Analyst → Critic → Judge",
-    debate: "Tranh luận đa vai (theo spec)",
+    pipeline: "Theo intent (không luôn đủ 4 vai)",
+    debate: "FRAME/OPTIONS: Analyst · CRITIQUE: Critic · VERIFY: tools · PREPARE: Judge",
   },
 };
 

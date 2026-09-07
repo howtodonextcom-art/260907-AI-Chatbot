@@ -374,6 +374,18 @@ export class MemoryExperimentRepository implements ExperimentRepository {
     return exp;
   }
 
+  async getById(
+    workspaceId: string,
+    sessionId: string,
+    experimentId: string
+  ): Promise<ExperimentDefinition | null> {
+    const exp = this.db.experiments.get(experimentId);
+    if (!exp || exp.workspaceId !== workspaceId || exp.sessionId !== sessionId) {
+      return null;
+    }
+    return exp;
+  }
+
   async listBySession(
     workspaceId: string,
     sessionId: string
@@ -381,6 +393,21 @@ export class MemoryExperimentRepository implements ExperimentRepository {
     return [...this.db.experiments.values()].filter(
       (e) => e.workspaceId === workspaceId && e.sessionId === sessionId
     );
+  }
+
+  async update(
+    workspaceId: string,
+    sessionId: string,
+    experimentId: string,
+    patch: Partial<
+      Pick<ExperimentDefinition, "status" | "results" | "winnerVariantId" | "limitations">
+    >
+  ): Promise<ExperimentDefinition> {
+    const existing = await this.getById(workspaceId, sessionId, experimentId);
+    if (!existing) throw new AppError("NOT_FOUND", "Experiment not found", 404);
+    const updated = { ...existing, ...patch };
+    this.db.experiments.set(experimentId, updated);
+    return updated;
   }
 }
 

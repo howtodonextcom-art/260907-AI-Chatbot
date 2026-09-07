@@ -6,13 +6,15 @@ import { runCritic } from "@/ai/agents/critic";
 import { runJudge } from "@/ai/agents/judge";
 import { runSecondOpinion } from "@/ai/agents/second-opinion";
 import { getServerEnv } from "@/config/env";
-import { buildContext } from "@/ai/orchestration/context-builder";
+import { buildCoreContext } from "@/ai/orchestration/context-builder";
 import { decideRouting } from "@/ai/orchestration/routing-policy";
 import {
   canSpend,
   createBudgetTracker,
-  recordUsage,
+  evaluateStop,
+  sessionStopFlags,
 } from "@/ai/orchestration/stop-conditions";
+import { runVerifyPipeline } from "@/ai/orchestration/verify-pipeline";
 import { getDomainPack } from "@/domain-packs/registry";
 import type {
   Assumption,
@@ -29,7 +31,13 @@ import {
   type GatedTransitionContext,
 } from "@/domain/decision/state-machine";
 import { AppError, humanizeProviderError } from "@/infrastructure/api/errors";
+import { cancelledError, isCancelledError } from "@/ai/gateway/abort";
 import { parseLooseJson } from "@/ai/agents/schemas";
+import {
+  contentToBlueprintFields,
+  deriveBlueprintContent,
+} from "@/domain/blueprint/service";
+import { experimentDraftInput } from "@/domain/experiment/lifecycle";
 
 /**
  * Transparent, documented heuristic mapping — not statistical precision.
@@ -107,6 +115,7 @@ export async function* runDecisionOrchestrator(args: {
   userRequest: string;
   requestId: string;
   gateway?: ModelGateway;
+  signal?: AbortSignal;
 }): AsyncGenerator<SseEvent> {
   const gateway = args.gateway ?? new ModelGateway();
   const domainPack = getDomainPack(
@@ -114,7 +123,14 @@ export async function* runDecisionOrchestrator(args: {
   );
   const budget = DEFAULT_BUDGETS[args.routeMode];
   const tracker = createBudgetTracker();
+  gateway.bindTracker(tracker);
   const correlationId = uuidv4();
+
+  const throwIfAborted = () => {
+    if (args.signal?.aborted) {
+      throw cancelledError();
+    }
+  };
 
   const messages = await args.repos.messages.listBySession(
     args.session.workspaceId,
@@ -134,9 +150,13 @@ export async function* runDecisionOrchestrator(args: {
     importance:
       args.intent === "PREPARE_DECISION"
         ? "HIGH"
-        : args.routeMode === "DEEP"
+        : args.intent === "CRITIQUE"
           ? "HIGH"
           : "MEDIUM",
+    blockingUnknownCount: args.session.unknowns.filter(
+      (u) => u.importance === "HIGH" && u.resolution === "OPEN"
+    ).length,
+    hasDeepseek: getServerEnv().hasDeepseek,
   });
 
   yield {
@@ -146,10 +166,11 @@ export async function* runDecisionOrchestrator(args: {
       sessionId: args.session.id,
       routeMode: args.routeMode,
       routing,
+      executionPlan: routing.plan,
     },
   };
 
-  const { systemInstructions, userContent } = await buildContext({
+  const { systemInstructions, userContent } = await buildCoreContext({
     session: args.session,
     messages,
     evidence,
@@ -170,6 +191,65 @@ export async function* runDecisionOrchestrator(args: {
       data: {
         code: "SCHEMA_INVALID",
         message: failedDomain.map((f) => f.message).join("; "),
+      },
+    };
+    return;
+  }
+
+  throwIfAborted();
+
+  if (routing.runVerifyTools) {
+    const verified = await runVerifyPipeline({
+      session: args.session,
+      ownerId: args.ownerId,
+      domainPack,
+    });
+    for (const ev of verified.events) {
+      yield ev;
+    }
+    for (const item of verified.evidence) {
+      await args.repos.evidence.create(item);
+    }
+    const verifyPatch = verified.sessionPatch;
+    const flags = sessionStopFlags({
+      assumptions: (verifyPatch.assumptions ?? args.session.assumptions),
+      unknowns: (verifyPatch.unknowns ?? args.session.unknowns),
+      evidence: [...evidence, ...verified.evidence],
+    });
+    const stop = evaluateStop({
+      ...flags,
+      budget,
+      tracker,
+      disagreementScore: undefined,
+      newInformationScore: undefined,
+    });
+    if (Object.keys(verifyPatch).length > 0) {
+      const updated = await args.repos.sessions.update(
+        args.session.workspaceId,
+        args.session.id,
+        args.ownerId,
+        verifyPatch
+      );
+      yield {
+        event: "decision.state.updated",
+        data: {
+          sessionId: updated.id,
+          patch: {
+            status: updated.status,
+            assumptions: updated.assumptions,
+            unknowns: updated.unknowns,
+          },
+        },
+      };
+    }
+    yield {
+      event: "run.completed",
+      data: {
+        correlationId,
+        status: "COMPLETED",
+        stopReason: verified.stopReason ?? stop.reason,
+        calls: tracker.calls,
+        executionPlan: routing.plan,
       },
     };
     return;
@@ -196,13 +276,14 @@ export async function* runDecisionOrchestrator(args: {
   // this exists. Only in DEEP, only when DeepSeek is actually configured;
   // never falls back to another provider (see runSecondOpinion).
   const secondOpinionPromise =
-    args.routeMode === "DEEP" && getServerEnv().hasDeepseek
+    routing.runSecondOpinion
       ? runSecondOpinion({
           gateway,
           request: {
             routeMode: args.routeMode,
-            systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("ANALYST")}`,
+            systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("SECOND_OPINION")}`,
             messages: [{ role: "user", content: userContent }],
+            signal: args.signal,
             // DeepSeek tends to be verbose; give real headroom so its JSON
             // response completes instead of truncating mid-object (which
             // silently loses agreementScore — see CLAUDE.md tech debt log).
@@ -213,11 +294,13 @@ export async function* runDecisionOrchestrator(args: {
               sessionId: args.session.id,
               promptVersion: "v1",
             },
+            outputSchemaName: domainPack.getOutputSchemaName("SECOND_OPINION"),
           },
         })
       : null;
 
   // --- Analyst ---
+  if (routing.runAnalyst) {
   yield {
     event: "agent.started",
     data: { role: "ANALYST", provider: args.routeMode === "QUICK" ? "groq" : "gemini" },
@@ -244,6 +327,7 @@ export async function* runDecisionOrchestrator(args: {
         routeMode: args.routeMode,
         systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("ANALYST")}`,
         messages: [{ role: "user", content: userContent }],
+        signal: args.signal,
         maxOutputTokens: budget.maxOutputTokens,
         metadata: {
           requestId: args.requestId,
@@ -251,6 +335,7 @@ export async function* runDecisionOrchestrator(args: {
           sessionId: args.session.id,
           promptVersion: "v1",
         },
+        outputSchemaName: domainPack.getOutputSchemaName("ANALYST"),
       },
     });
 
@@ -259,11 +344,6 @@ export async function* runDecisionOrchestrator(args: {
       extractReply(analyst.content) ??
       analyst.content;
 
-    recordUsage(tracker, {
-      inputTokens: analyst.usage.inputTokens,
-      outputTokens: analyst.usage.outputTokens,
-      costUsd: analyst.estimatedCostUsd,
-    });
     totalCost += analyst.estimatedCostUsd ?? 0;
 
     await args.repos.agentRuns.update(
@@ -287,6 +367,20 @@ export async function* runDecisionOrchestrator(args: {
 
     if (analyst.structured) {
       sessionPatch = applyAnalystState(args.session, analyst.structured, args.intent);
+      const experimentUnknowns = (
+        sessionPatch.unknowns ?? args.session.unknowns
+      ).filter((u) => u.resolution === "EXPERIMENT_REQUIRED");
+      if (experimentUnknowns.length) {
+        await args.repos.experiments.create(
+          experimentDraftInput({
+            workspaceId: args.session.workspaceId,
+            sessionId: args.session.id,
+            ownerId: args.ownerId,
+            hypothesis: experimentUnknowns[0].question,
+            source: `unknown:${experimentUnknowns[0].id}`,
+          })
+        );
+      }
     }
 
     await args.repos.messages.create({
@@ -319,26 +413,56 @@ export async function* runDecisionOrchestrator(args: {
       },
     };
   } catch (error) {
+    const cancelled = isCancelledError(error) || Boolean(args.signal?.aborted);
     await args.repos.agentRuns.update(
       args.session.workspaceId,
       args.session.id,
       analystRun.id,
       args.ownerId,
       {
-        status: "FAILED",
-        errorCode: "PROVIDER_ERROR",
-        errorMessage: humanizeProviderError(error),
+        status: cancelled ? "CANCELLED" : "FAILED",
+        errorCode: cancelled ? "PROVIDER_ERROR" : "PROVIDER_ERROR",
+        errorMessage: cancelled
+          ? "Run cancelled"
+          : humanizeProviderError(error),
         finishedAt: new Date().toISOString(),
       }
     );
     yield {
       event: "run.failed",
       data: {
-        code: "PROVIDER_ERROR",
-        message: humanizeProviderError(error),
+        code: cancelled ? "PROVIDER_ERROR" : "PROVIDER_ERROR",
+        message: cancelled ? "Run cancelled" : humanizeProviderError(error),
+        cancelled,
       },
     };
     return;
+  }
+  } else {
+    analystContent =
+      args.session.latestSummary ?? args.userRequest;
+  }
+
+  const afterAnalystFlags = sessionStopFlags({
+    assumptions: sessionPatch.assumptions ?? args.session.assumptions,
+    unknowns: sessionPatch.unknowns ?? args.session.unknowns,
+    evidence,
+  });
+  const afterAnalystStop = evaluateStop({
+    ...afterAnalystFlags,
+    budget,
+    tracker,
+    disagreementScore: undefined,
+    newInformationScore: undefined,
+  });
+  const skipRemainder =
+    afterAnalystStop.stop &&
+    (afterAnalystStop.reason === "EXPERIMENT_REQUIRED" ||
+      afterAnalystStop.reason === "HUMAN_DECISION_REQUIRED" ||
+      afterAnalystStop.reason === "BUDGET_EXHAUSTED" ||
+      afterAnalystStop.reason === "MAX_ROUNDS_REACHED");
+  if (secondOpinionPromise && skipRemainder) {
+    void secondOpinionPromise.catch(() => undefined);
   }
 
   // --- Second Opinion (optional, DEEP + DeepSeek configured only) ---
@@ -346,7 +470,7 @@ export async function* runDecisionOrchestrator(args: {
   // the result. A DeepSeek failure here is non-fatal — Analyst's output
   // stands on its own, matching the existing Critic/Judge partial-failure
   // philosophy (spec v5 §30).
-  if (secondOpinionPromise) {
+  if (secondOpinionPromise && !skipRemainder) {
     yield {
       event: "agent.started",
       data: { role: "SECOND_OPINION", provider: "deepseek" },
@@ -372,11 +496,6 @@ export async function* runDecisionOrchestrator(args: {
         extractReply(secondOpinion.content) ??
         secondOpinion.content;
 
-      recordUsage(tracker, {
-        inputTokens: secondOpinion.usage.inputTokens,
-        outputTokens: secondOpinion.usage.outputTokens,
-        costUsd: secondOpinion.estimatedCostUsd,
-      });
       totalCost += secondOpinion.estimatedCostUsd ?? 0;
 
       await args.repos.agentRuns.update(
@@ -452,7 +571,8 @@ export async function* runDecisionOrchestrator(args: {
   }
 
   // --- Critic (optional) ---
-  if (routing.runCritic) {
+  if (routing.runCritic && !skipRemainder) {
+    throwIfAborted();
     const criticSpend = canSpend(tracker, budget);
     if (!criticSpend.ok) {
       yield {
@@ -488,6 +608,7 @@ export async function* runDecisionOrchestrator(args: {
             routeMode: args.routeMode,
             systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("CRITIC")}`,
             messages: [{ role: "user", content: userContent }],
+            signal: args.signal,
             maxOutputTokens: Math.min(1500, budget.maxOutputTokens),
             metadata: {
               requestId: args.requestId,
@@ -495,17 +616,13 @@ export async function* runDecisionOrchestrator(args: {
               sessionId: args.session.id,
               promptVersion: "v1",
             },
+            outputSchemaName: domainPack.getOutputSchemaName("CRITIC"),
           },
         });
         criticContent =
           critic.structured?.reply ??
           extractReply(critic.content) ??
           critic.content;
-        recordUsage(tracker, {
-          inputTokens: critic.usage.inputTokens,
-          outputTokens: critic.usage.outputTokens,
-          costUsd: critic.estimatedCostUsd,
-        });
         totalCost += critic.estimatedCostUsd ?? 0;
 
         await args.repos.agentRuns.update(
@@ -584,7 +701,12 @@ export async function* runDecisionOrchestrator(args: {
 
   // --- Judge (optional) ---
   let judgeDraft: JudgeDraft | undefined;
-  if (routing.runJudge && (!partial || args.intent === "PREPARE_DECISION")) {
+  if (
+    routing.runJudge &&
+    !skipRemainder &&
+    (!partial || args.intent === "PREPARE_DECISION")
+  ) {
+    throwIfAborted();
     const judgeSpend = canSpend(tracker, budget);
     if (!judgeSpend.ok) {
       partial = true;
@@ -621,6 +743,7 @@ export async function* runDecisionOrchestrator(args: {
             routeMode: args.routeMode,
             systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("JUDGE")}`,
             messages: [{ role: "user", content: userContent }],
+            signal: args.signal,
             maxOutputTokens: budget.maxOutputTokens,
             metadata: {
               requestId: args.requestId,
@@ -628,6 +751,7 @@ export async function* runDecisionOrchestrator(args: {
               sessionId: args.session.id,
               promptVersion: "v1",
             },
+            outputSchemaName: domainPack.getOutputSchemaName("JUDGE"),
           },
         });
 
@@ -636,11 +760,6 @@ export async function* runDecisionOrchestrator(args: {
           extractReply(judge.content) ??
           judge.content;
 
-        recordUsage(tracker, {
-          inputTokens: judge.usage.inputTokens,
-          outputTokens: judge.usage.outputTokens,
-          costUsd: judge.estimatedCostUsd,
-        });
         totalCost += judge.estimatedCostUsd ?? 0;
 
         await args.repos.agentRuns.update(
@@ -702,7 +821,25 @@ export async function* runDecisionOrchestrator(args: {
           const highPriorityOpenUnknowns = mergedUnknowns.filter(
             (u) => u.importance === "HIGH" && u.resolution === "OPEN"
           ).length;
-          if (judge.structured.decision !== "INSUFFICIENT_EVIDENCE") {
+          if (
+            judge.structured.decision === "EXPERIMENT_FIRST"
+          ) {
+            await args.repos.experiments.create(
+              experimentDraftInput({
+                workspaceId: args.session.workspaceId,
+                sessionId: args.session.id,
+                ownerId: args.ownerId,
+                hypothesis:
+                  judge.structured.unresolvedUnknowns[0] ??
+                  "Judge required an experiment before deciding",
+                source: `judge:${judgeRun.id}`,
+              })
+            );
+          }
+          if (
+            judge.structured.decision === "ACCEPT" ||
+            judge.structured.decision === "ACCEPT_WITH_CHANGES"
+          ) {
             const gated = gateStatusTransition(
               sessionPatch.status ?? args.session.status,
               "DECISION_READY",
@@ -820,6 +957,11 @@ export async function* runDecisionOrchestrator(args: {
       status: partial ? "PARTIAL" : "COMPLETED",
       costUsd: totalCost,
       calls: tracker.calls,
+      plannedCalls: routing.plan.estimatedCalls,
+      actualProviderCalls: tracker.calls,
+      plannedCost: routing.plan.estimatedMaxCostUsd,
+      stopReason: skipRemainder ? afterAnalystStop.reason : null,
+      executionPlan: routing.plan,
     },
   };
 }
@@ -1073,6 +1215,11 @@ export async function approveDecision(args: {
     args.session.id,
     args.ownerId
   );
+  const experiments = await args.repos.experiments.listBySession(
+    args.session.workspaceId,
+    args.session.id
+  );
+  const completedExperiments = experiments.filter((e) => e.status === "COMPLETED");
   const confidence = calculateHeuristicConfidence({
     evidenceCoverage: Math.min(1, evidence.length / 5),
     sourceReliability:
@@ -1085,13 +1232,15 @@ export async function approveDecision(args: {
       draft.unresolvedUnknownIds.length / 5
     ),
     assumptionPenalty: Math.min(1, args.session.assumptions.length / 10),
-    // Judge's HEURISTIC assessment after seeing both Analyst's and
-    // SecondOpinion's real output (JUDGE_HEURISTIC), or a neutral
-    // "unmeasured" 0.5 — never a fake-confident default — when no second
-    // opinion was available for this run. See CLAUDE.md
-    // [[second-opinion-agreement-semantics]].
     agentAgreement: draft.agentAgreement ?? AGREEMENT_UNAVAILABLE_SCORE,
-    experimentStrength: 0.2,
+    experimentStrength:
+      completedExperiments.length === 0
+        ? 0
+        : Math.min(1, completedExperiments.length / 2),
+    experimentStrengthMethod:
+      completedExperiments.length === 0
+        ? "UNAVAILABLE"
+        : "COMPLETED_EXPERIMENTS",
   });
 
   const previous = await args.repos.decisionRecords.getBySession(
@@ -1193,6 +1342,19 @@ export async function createBlueprintFromDecision(args: {
   const selected = args.session.options.find(
     (o) => o.id === decision.selectedOptionId
   );
+  void selected;
+
+  const evidenceForBlueprint = await args.repos.evidence.listBySession(
+    args.session.workspaceId,
+    args.session.id,
+    args.ownerId
+  );
+  const derived = deriveBlueprintContent({
+    session: args.session,
+    decision,
+    evidence: evidenceForBlueprint,
+  });
+  const fields = contentToBlueprintFields(derived);
 
   let blueprintId: string | undefined;
   if (idempotencyKey) {
@@ -1227,70 +1389,7 @@ export async function createBlueprintFromDecision(args: {
     ownerId: args.ownerId,
     sourceDecisionRecordId: decision.id,
     status: "DRAFT",
-    title: `Blueprint: ${args.session.title}`,
-    projectGoal: args.session.objective ?? args.session.title,
-    problem: args.session.problem,
-    targetUsers: ["Primary decision maker", "Implementation team"],
-    scope: selected
-      ? [selected.title, selected.description]
-      : ["Implement selected decision"],
-    nonGoals: [
-      "Do not expand beyond DecisionRecord scope",
-      "Do not add unapproved providers or infrastructure",
-    ],
-    modules: [
-      {
-        name: selected?.title ?? "Core Module",
-        jobToBeDone: selected?.description ?? "Deliver the approved decision",
-        inputs: ["Approved DecisionRecord", "User requirements"],
-        outputs: ["Working MVP increment"],
-        dependencies: [],
-        acceptanceCriteria: [
-          "Matches DecisionRecord rationale",
-          "Respects listed non-goals",
-          "Includes tests for critical paths",
-        ],
-      },
-    ],
-    architecture: {
-      summary:
-        selected?.description ??
-        "Architecture derived from approved decision options",
-    },
-    dataModel: args.session.criteria.map((c) => c.name),
-    apiContracts: [
-      {
-        method: "POST",
-        path: "/api/sessions/:sessionId/run",
-        purpose: "Execute bounded multi-agent decision run",
-      },
-    ],
-    aiWorkflow: [
-      "Analyst frames problem",
-      "Optional Critic challenges",
-      "Optional Judge synthesizes",
-      "Human approves DecisionRecord",
-      "Blueprint handoff",
-    ],
-    securityRequirements: [
-      "API keys server-side only",
-      "Owner-scoped authorization",
-    ],
-    observabilityRequirements: [
-      "Log AgentRun cost/latency/promptVersion",
-    ],
-    testRequirements: [
-      "Unit tests for state machine and confidence",
-      "API auth smoke tests",
-    ],
-    deploymentRequirements: ["Vercel", "Firebase Auth/Firestore"],
-    acceptanceCriteria: [
-      "Implements selected option from DecisionRecord",
-      "Preserves evidence provenance rules",
-      "Produces auditable decision artifacts",
-    ],
-    openRisks: decision.tradeoffs,
-    decisionReferences: [decision.id, ...decision.rationale.slice(0, 3)],
+    ...fields,
     createdAt: new Date().toISOString(),
   });
 

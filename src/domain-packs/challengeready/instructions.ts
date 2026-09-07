@@ -9,8 +9,8 @@ Never recommend placing live trades.`,
 } as const;
 
 export const CHALLENGEREADY_SCHEMAS = {
-  ANALYST: "challengeready_analyst_v1",
-  CRITIC: "challengeready_critic_v1",
-  JUDGE: "challengeready_judge_v1",
-  SECOND_OPINION: "challengeready_second_opinion_v1",
+  ANALYST: "analyst_output_v1",
+  CRITIC: "critic_output_v1",
+  JUDGE: "judge_output_v1",
+  SECOND_OPINION: "second_opinion_output_v1",
 } as const;

@@ -77,7 +77,10 @@ export class DeepSeekProvider implements ModelProvider {
     return key;
   }
 
-  private async chatCompletions(body: Record<string, unknown>): Promise<Response> {
+  private async chatCompletions(
+    body: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<Response> {
     try {
       return await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
         method: "POST",
@@ -86,7 +89,9 @@ export class DeepSeekProvider implements ModelProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+          : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       if (
@@ -110,15 +115,18 @@ export class DeepSeekProvider implements ModelProvider {
   ): Promise<ModelResult<T>> {
     const started = Date.now();
     try {
-      const response = await this.chatCompletions({
-        model: this.modelName,
-        messages: buildMessages(request),
-        max_tokens: request.maxOutputTokens,
-        temperature: request.temperature ?? 0.4,
-        response_format: request.outputSchemaName
-          ? { type: "json_object" }
-          : undefined,
-      });
+      const response = await this.chatCompletions(
+        {
+          model: this.modelName,
+          messages: buildMessages(request),
+          max_tokens: request.maxOutputTokens,
+          temperature: request.temperature ?? 0.4,
+          response_format: request.outputSchemaName
+            ? { type: "json_object" }
+            : undefined,
+        },
+        request.signal
+      );
 
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
@@ -171,19 +179,22 @@ export class DeepSeekProvider implements ModelProvider {
   ): AsyncIterable<ModelStreamEvent> {
     const started = Date.now();
     try {
-      const response = await this.chatCompletions({
-        model: this.modelName,
-        stream: true,
-        max_tokens: request.maxOutputTokens,
-        temperature: request.temperature ?? 0.4,
-        messages: [
-          { role: "system", content: request.systemInstructions },
-          ...request.messages.map((m) => ({
-            role: mapRole(m.role === "system" ? "user" : m.role),
-            content: m.content,
-          })),
-        ],
-      });
+      const response = await this.chatCompletions(
+        {
+          model: this.modelName,
+          stream: true,
+          max_tokens: request.maxOutputTokens,
+          temperature: request.temperature ?? 0.4,
+          messages: [
+            { role: "system", content: request.systemInstructions },
+            ...request.messages.map((m) => ({
+              role: mapRole(m.role === "system" ? "user" : m.role),
+              content: m.content,
+            })),
+          ],
+        },
+        request.signal
+      );
 
       if (!response.ok || !response.body) {
         const detail = await response.text().catch(() => "");

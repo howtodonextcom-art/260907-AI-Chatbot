@@ -73,10 +73,23 @@ export interface BlueprintRepository {
 
 export interface ExperimentRepository {
   create(input: Omit<ExperimentDefinition, "id">): Promise<ExperimentDefinition>;
+  getById(
+    workspaceId: string,
+    sessionId: string,
+    experimentId: string
+  ): Promise<ExperimentDefinition | null>;
   listBySession(
     workspaceId: string,
     sessionId: string
   ): Promise<ExperimentDefinition[]>;
+  update(
+    workspaceId: string,
+    sessionId: string,
+    experimentId: string,
+    patch: Partial<
+      Pick<ExperimentDefinition, "status" | "results" | "winnerVariantId" | "limitations">
+    >
+  ): Promise<ExperimentDefinition>;
 }
 
 export interface IdempotencyStore {

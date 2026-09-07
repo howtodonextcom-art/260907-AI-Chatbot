@@ -36,9 +36,16 @@ export function DecisionCanvas(props: {
   evidence: EvidenceItem[];
   decision: DecisionRecord | null;
   blueprint: Blueprint | null;
+  experiments?: Array<{
+    id: string;
+    hypothesis: string;
+    status: string;
+  }>;
+  executionPlan?: { stages: string[]; estimatedCalls: number } | null;
   onApproveDecision: () => void;
   onGenerateBlueprint: () => void;
   onApproveBlueprint: () => void;
+  onExportBlueprint?: () => void;
 }) {
   const { session } = props;
 
@@ -73,6 +80,12 @@ export function DecisionCanvas(props: {
         <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
           Trạng thái: {session.status}
         </p>
+        {props.executionPlan ? (
+          <p className="mt-1 text-xs" data-testid="execution-plan">
+            Kế hoạch: {props.executionPlan.stages.join(" → ") || "tools"} · ~
+            {props.executionPlan.estimatedCalls} gọi model
+          </p>
+        ) : null}
       </section>
 
       <section>
@@ -130,7 +143,7 @@ export function DecisionCanvas(props: {
                 style={{ borderColor: "var(--border)" }}
               >
                 <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  {e.type} · {e.reliability}
+                  {e.type} · {e.reliability} · {e.verificationStatus}
                 </div>
                 {e.claim}
               </li>
@@ -140,7 +153,24 @@ export function DecisionCanvas(props: {
       </section>
 
       <section>
-        <h2 className="type-section mb-1">Decision</h2>
+        <h2 className="type-section mb-1">
+          Experiments ({props.experiments?.length ?? 0})
+        </h2>
+        {!props.experiments?.length ? (
+          <CanvasEmpty label="Chưa có thí nghiệm — EXPERIMENT_REQUIRED sẽ tạo bản nháp." />
+        ) : (
+          <ul className="grid gap-1" data-testid="experiment-list">
+            {props.experiments.map((ex) => (
+              <li key={ex.id} className="text-sm">
+                {ex.hypothesis}{" "}
+                <span style={{ color: "var(--text-muted)" }}>({ex.status})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
         {session.judgeDraft &&
         session.status === "DECISION_READY" &&
         !props.decision ? (
@@ -156,6 +186,7 @@ export function DecisionCanvas(props: {
               type="button"
               onClick={props.onApproveDecision}
               className="lab-btn lab-btn-primary"
+              data-testid="approve-decision"
             >
               Duyệt Decision Record
             </button>
@@ -174,6 +205,7 @@ export function DecisionCanvas(props: {
                 type="button"
                 onClick={props.onGenerateBlueprint}
                 className="lab-btn lab-btn-ghost mt-2"
+                data-testid="generate-blueprint"
               >
                 Tạo Blueprint
               </button>
@@ -203,8 +235,19 @@ export function DecisionCanvas(props: {
                 type="button"
                 onClick={props.onApproveBlueprint}
                 className="lab-btn lab-btn-primary mt-2"
+                data-testid="approve-blueprint"
               >
                 Duyệt Blueprint
+              </button>
+            ) : null}
+            {props.onExportBlueprint ? (
+              <button
+                type="button"
+                onClick={props.onExportBlueprint}
+                className="lab-btn lab-btn-ghost mt-2 ml-2"
+                data-testid="export-blueprint"
+              >
+                Export Markdown
               </button>
             ) : null}
           </div>

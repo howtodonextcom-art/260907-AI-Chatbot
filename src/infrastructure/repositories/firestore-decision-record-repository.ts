@@ -137,6 +137,47 @@ export class FirestoreExperimentRepository implements ExperimentRepository {
       id: d.id,
     }));
   }
+
+  async getById(
+    workspaceId: string,
+    sessionId: string,
+    experimentId: string
+  ): Promise<ExperimentDefinition | null> {
+    const snap = await getAdminDb()
+      .collection("workspaces")
+      .doc(workspaceId)
+      .collection("sessions")
+      .doc(sessionId)
+      .collection("experiments")
+      .doc(experimentId)
+      .get();
+    if (!snap.exists) return null;
+    return { ...(snap.data() as ExperimentDefinition), id: snap.id };
+  }
+
+  async update(
+    workspaceId: string,
+    sessionId: string,
+    experimentId: string,
+    patch: Partial<
+      Pick<ExperimentDefinition, "status" | "results" | "winnerVariantId" | "limitations">
+    >
+  ): Promise<ExperimentDefinition> {
+    const existing = await this.getById(workspaceId, sessionId, experimentId);
+    if (!existing) {
+      throw new AppError("NOT_FOUND", "Experiment not found", 404);
+    }
+    const updated = { ...existing, ...patch };
+    await getAdminDb()
+      .collection("workspaces")
+      .doc(workspaceId)
+      .collection("sessions")
+      .doc(sessionId)
+      .collection("experiments")
+      .doc(experimentId)
+      .set(updated);
+    return updated;
+  }
 }
 
 export class FirestoreIdempotencyStore implements IdempotencyStore {

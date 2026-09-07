@@ -67,6 +67,7 @@ export async function POST(request: Request, { params }: Params) {
             intent: body.intent,
             userRequest,
             requestId,
+            signal: request.signal,
           })) {
             controller.enqueue(encoder.encode(encodeSse(event)));
           }

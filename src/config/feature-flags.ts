@@ -6,5 +6,6 @@ export function getFeatureFlags() {
     enableCritic: env.enableCritic,
     enableJudge: env.enableJudge,
     enableChallengeReadyPack: env.enableChallengeReadyPack,
+    enableSecondOpinion: env.enableSecondOpinion,
   };
 }

@@ -140,6 +140,7 @@ export default function WorkspaceDetailPage() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Tiêu đề quyết định"
+          data-testid="session-title"
           className="lab-input px-3 py-2"
         />
         <textarea
@@ -147,6 +148,7 @@ export default function WorkspaceDetailPage() {
           value={problem}
           onChange={(e) => setProblem(e.target.value)}
           placeholder="Vấn đề cần quyết định"
+          data-testid="session-problem"
           rows={4}
           className="lab-input px-3 py-2"
         />
@@ -154,6 +156,7 @@ export default function WorkspaceDetailPage() {
           value={objective}
           onChange={(e) => setObjective(e.target.value)}
           placeholder="Mục tiêu / câu hỏi quyết định (khuyến nghị)"
+          data-testid="session-objective"
           rows={2}
           className="lab-input px-3 py-2"
         />
@@ -161,6 +164,7 @@ export default function WorkspaceDetailPage() {
           type="submit"
           disabled={creating}
           className="lab-btn lab-btn-primary justify-self-start"
+          data-testid="create-session"
         >
           {creating ? "Đang tạo…" : "Tạo Session"}
         </button>

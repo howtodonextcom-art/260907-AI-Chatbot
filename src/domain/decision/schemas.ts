@@ -128,10 +128,31 @@ export const CreateEvidenceSchema = z.object({
   ]),
   claim: z.string().min(1).max(5000),
   source: z.string().max(2000).optional(),
+  /** Ignored server-side — clients cannot self-upgrade trust. */
   reliability: z.enum(["HIGH", "MEDIUM", "LOW"]).optional(),
   supportsOptionIds: z.array(z.string()).default([]),
   contradictsOptionIds: z.array(z.string()).default([]),
   metadata: z.record(z.unknown()).optional(),
+});
+
+export const CreateExperimentSchema = z.object({
+  hypothesis: z.string().min(1).max(5000),
+  type: z
+    .enum([
+      "COMPARISON",
+      "CALCULATION",
+      "SIMULATION",
+      "BENCHMARK",
+      "CONTROLLED_EXPERIMENT",
+      "AB_TEST",
+    ])
+    .default("COMPARISON"),
+});
+
+export const TransitionExperimentSchema = z.object({
+  status: z.enum(["DRAFT", "READY", "RUNNING", "COMPLETED", "CANCELLED"]),
+  results: z.record(z.unknown()).optional(),
+  winnerVariantId: z.string().optional(),
 });
 
 export function validateCriteriaWeights(

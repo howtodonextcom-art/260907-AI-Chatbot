@@ -34,7 +34,7 @@ export async function runCritic(args: {
     ...args.request,
     role: "CRITIC",
     systemInstructions: `${prompt.template}\n\n${args.request.systemInstructions}`,
-    outputSchemaName: "critic_output_v1",
+    outputSchemaName: args.request.outputSchemaName ?? "critic_output_v1",
     messages: [
       ...args.request.messages,
       {

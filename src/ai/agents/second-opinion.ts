@@ -41,7 +41,7 @@ export async function runSecondOpinion(args: {
     ...args.request,
     role: "SECOND_OPINION",
     systemInstructions: `${prompt.template}\n\n${args.request.systemInstructions}`,
-    outputSchemaName: "second_opinion_output_v1",
+    outputSchemaName: args.request.outputSchemaName ?? "second_opinion_output_v1",
     metadata: {
       ...args.request.metadata,
       promptVersion: prompt.version,

@@ -68,7 +68,13 @@ export const GENERIC_DECISION_WORKFLOW: DomainPack = {
   },
 
   getOutputSchemaName(role: AgentRole) {
-    return `${role.toLowerCase()}_output_v1`;
+    const names: Record<AgentRole, string> = {
+      ANALYST: "analyst_output_v1",
+      CRITIC: "critic_output_v1",
+      JUDGE: "judge_output_v1",
+      SECOND_OPINION: "second_opinion_output_v1",
+    };
+    return names[role];
   },
 
   async validateDecision(decision: DecisionRecord) {
@@ -81,5 +87,39 @@ export const GENERIC_DECISION_WORKFLOW: DomainPack = {
       errors.push("Confidence must be HEURISTIC");
     }
     return { valid: errors.length === 0, errors };
+  },
+
+  getDecisionCriteria(): Criterion[] {
+    return [
+      {
+        id: "fit-to-problem",
+        name: "Fit to stated problem",
+        weight: 0.4,
+        proposedBy: "DOMAIN_PACK",
+        confirmedByUser: false,
+      },
+      {
+        id: "implementation-risk",
+        name: "Implementation risk",
+        weight: 0.3,
+        proposedBy: "DOMAIN_PACK",
+        confirmedByUser: false,
+      },
+      {
+        id: "reversibility",
+        name: "Reversibility",
+        weight: 0.3,
+        proposedBy: "DOMAIN_PACK",
+        confirmedByUser: false,
+      },
+    ];
+  },
+
+  getToolConnectorIds() {
+    return ["calculator"];
+  },
+
+  getEvaluationSuiteId() {
+    return "generic-baseline";
   },
 };

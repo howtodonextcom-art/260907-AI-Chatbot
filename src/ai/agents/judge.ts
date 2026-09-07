@@ -34,7 +34,7 @@ export async function runJudge(args: {
     ...args.request,
     role: "JUDGE",
     systemInstructions: `${prompt.template}\n\n${args.request.systemInstructions}`,
-    outputSchemaName: "judge_output_v1",
+    outputSchemaName: args.request.outputSchemaName ?? "judge_output_v1",
     messages: [
       ...args.request.messages,
       {

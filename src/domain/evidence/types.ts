@@ -19,6 +19,22 @@ export interface Message {
   createdAt: ISODateTime;
 }
 
+export type VerificationStatus =
+  | "UNVERIFIED"
+  | "VERIFIED"
+  | "CONTRADICTED"
+  | "NOT_VERIFIABLE";
+
+export type VerificationActor = "TOOL" | "SYSTEM" | "USER" | "EXPERIMENT";
+
+export interface VerificationMetadata {
+  status: VerificationStatus;
+  verifiedBy?: VerificationActor;
+  verifiedAt?: ISODateTime;
+  verifierId?: string;
+  method?: string;
+}
+
 export interface EvidenceItem {
   id: string;
   workspaceId: string;
@@ -27,11 +43,18 @@ export interface EvidenceItem {
   type: EvidenceType;
   claim: string;
   source?: string;
+  /** Provenance label — not the same as verification. */
   reliability: EvidenceReliability;
   createdBy: "USER" | "AI" | "TOOL" | "SYSTEM";
   supportsOptionIds: string[];
   contradictsOptionIds: string[];
+  supportsAssumptionIds?: string[];
+  contradictsAssumptionIds?: string[];
+  supportsUnknownIds?: string[];
+  verificationStatus: VerificationStatus;
+  verifiedBy?: VerificationActor;
   verifiedAt?: ISODateTime;
+  verificationMethod?: string;
   metadata?: Record<string, unknown>;
   createdAt: ISODateTime;
 }

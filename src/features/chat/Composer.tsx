@@ -5,7 +5,7 @@ import type { RouteMode } from "@/domain/decision/types";
 const FOOTER_BY_MODE: Record<RouteMode, string> = {
   QUICK: "QUICK: một lần gọi · không Critic/Judge",
   STANDARD: "STANDARD: chỉ Analyst · chọn DEEP để tranh luận",
-  DEEP: "DEEP: Analyst → Critic → Judge sẽ trả lời lần lượt",
+  DEEP: "DEEP: gọi model theo intent — không chạy đủ hội đồng mỗi bước",
 };
 
 export function Composer(props: {
@@ -35,6 +35,7 @@ export function Composer(props: {
         </label>
         <textarea
           id="decision-composer"
+          data-testid="composer"
           value={props.value}
           onChange={(e) => props.onChange(e.target.value)}
           rows={2}
@@ -62,6 +63,7 @@ export function Composer(props: {
               type="button"
               onClick={() => void props.onSend()}
               className="lab-btn lab-btn-primary min-h-[56px] px-4 text-sm"
+              data-testid="send-message"
             >
               Gửi
             </button>
@@ -70,7 +72,8 @@ export function Composer(props: {
                 type="button"
                 onClick={props.onAutoRun}
                 className="lab-btn min-h-[56px] px-3 text-sm"
-                title="Tự động chạy Định khung → Sinh phương án → Phản biện → Xác minh (DEEP), dừng khi tới Decision Ready"
+                data-testid="auto-workflow"
+                title="Tự động: FRAME→Analyst, OPTIONS→Analyst, CRITIQUE→Critic, VERIFY→tools (~4–7 gọi, không 16)"
               >
                 ▶ Tự động 4 bước
               </button>

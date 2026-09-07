@@ -16,8 +16,8 @@ export const DEFAULT_BUDGETS: Record<RouteMode, AiBudget> = {
     maxRounds: 1,
   },
   DEEP: {
-    // 5: Analyst + SecondOpinion (parallel) + Critic + Judge + 1 repair retry.
-    maxCalls: 5,
+    // Analyst + optional repair + SecondOpinion + Critic + Judge + one repair.
+    maxCalls: 8,
     maxInputTokens: 50000,
     maxOutputTokens: 10000,
     maxCostUsd: 0.3,

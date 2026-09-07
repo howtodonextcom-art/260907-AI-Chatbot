@@ -12,6 +12,7 @@ import {
   getDefaultModel,
 } from "@/ai/gateway/model-registry";
 import { AppError } from "@/infrastructure/api/errors";
+import { withAbortSignal } from "@/ai/gateway/abort";
 
 export class GroqProvider implements ModelProvider {
   id = "groq";
@@ -60,15 +61,17 @@ export class GroqProvider implements ModelProvider {
         });
       }
 
-      const completion = await this.client().chat.completions.create({
-        model: this.modelName,
-        messages,
-        max_tokens: request.maxOutputTokens,
-        temperature: request.temperature ?? 0.4,
-        response_format: request.outputSchemaName
-          ? { type: "json_object" }
-          : undefined,
-      });
+      const completion = await withAbortSignal(request.signal, () =>
+        this.client().chat.completions.create({
+          model: this.modelName,
+          messages,
+          max_tokens: request.maxOutputTokens,
+          temperature: request.temperature ?? 0.4,
+          response_format: request.outputSchemaName
+            ? { type: "json_object" }
+            : undefined,
+        })
+      );
 
       const content = completion.choices[0]?.message?.content ?? "";
       const inputTokens = completion.usage?.prompt_tokens;

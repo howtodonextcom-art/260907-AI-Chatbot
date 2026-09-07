@@ -27,14 +27,25 @@ function clamp(n: number, min: number, max: number): number {
 }
 
 export function calculateHeuristicConfidence(
-  factors: ConfidenceFactors
-): HeuristicConfidence {
+  factors: ConfidenceFactors & {
+    experimentStrengthMethod?: "COMPLETED_EXPERIMENTS" | "UNAVAILABLE";
+  }
+): HeuristicConfidence & {
+  experimentStrengthMethod: "COMPLETED_EXPERIMENTS" | "UNAVAILABLE";
+} {
   const knownFacts = factors.knownFactsCoverage ?? factors.evidenceCoverage;
+  const experimentStrengthMethod =
+    factors.experimentStrengthMethod ??
+    (factors.experimentStrength > 0
+      ? "COMPLETED_EXPERIMENTS"
+      : "UNAVAILABLE");
+  const experimentStrength =
+    experimentStrengthMethod === "UNAVAILABLE" ? 0 : factors.experimentStrength;
   const base =
     0.3 * factors.evidenceCoverage +
     0.2 * factors.sourceReliability +
     0.15 * factors.agentAgreement +
-    0.2 * factors.experimentStrength +
+    0.2 * experimentStrength +
     0.15 * knownFacts;
 
   const penalty =
@@ -55,7 +66,8 @@ export function calculateHeuristicConfidence(
       unresolvedUnknownPenalty: factors.unresolvedUnknownPenalty,
       assumptionPenalty: factors.assumptionPenalty,
       agentAgreement: factors.agentAgreement,
-      experimentStrength: factors.experimentStrength,
+      experimentStrength,
     },
+    experimentStrengthMethod,
   };
 }

@@ -192,6 +192,7 @@ export interface DecisionRecord {
     /** How agentAgreement was derived — never fake statistical precision. */
     agentAgreementMethod: "JUDGE_HEURISTIC" | "UNAVAILABLE";
     agentAgreementRationale?: string;
+    experimentStrengthMethod?: "COMPLETED_EXPERIMENTS" | "UNAVAILABLE";
   };
   reviewTriggers: string[];
   supersedesDecisionRecordId?: string;

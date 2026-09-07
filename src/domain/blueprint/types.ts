@@ -72,6 +72,7 @@ export interface Blueprint {
   acceptanceCriteria: string[];
   openRisks: string[];
   decisionReferences: string[];
+  implementationOrder?: string[];
   createdAt: ISODateTime;
   approvedAt?: ISODateTime;
   supersededAt?: ISODateTime;
@@ -89,6 +90,7 @@ export interface ExperimentDefinition {
   id: string;
   workspaceId: string;
   sessionId: string;
+  ownerId: string;
   hypothesis: string;
   type: ExperimentType;
   variants: Array<{

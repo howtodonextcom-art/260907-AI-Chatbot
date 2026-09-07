@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { apiFetch, getAuthToken } from "@/features/workspace/api-client";
 import type { DecisionSession, RouteMode } from "@/domain/decision/types";
 import type { Message, EvidenceItem } from "@/domain/evidence/types";
-import type { AgentRun, Blueprint } from "@/domain/blueprint/types";
+import type { AgentRun, Blueprint, ExperimentDefinition } from "@/domain/blueprint/types";
 import type { DecisionRecord } from "@/domain/decision/types";
 import { ChatPanel } from "@/features/chat/ChatPanel";
 import { DecisionCanvas } from "@/features/decision-canvas/DecisionCanvas";
@@ -33,6 +33,11 @@ export default function SessionPage() {
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [decision, setDecision] = useState<DecisionRecord | null>(null);
   const [blueprint, setBlueprint] = useState<Blueprint | null>(null);
+  const [experiments, setExperiments] = useState<ExperimentDefinition[]>([]);
+  const [executionPlan, setExecutionPlan] = useState<{
+    stages: string[];
+    estimatedCalls: number;
+  } | null>(null);
   const [routeMode, setRouteMode] = useState<RouteMode>("STANDARD");
   const [intent, setIntent] = useState<Intent>("DISCUSS");
   const [streamingText, setStreamingText] = useState("");
@@ -53,7 +58,7 @@ export default function SessionPage() {
       `/api/sessions/${sessionId}`
     );
     setSession(s.session);
-    const [msgs, ev, rs, dec, bp, list] = await Promise.all([
+    const [msgs, ev, rs, dec, bp, list, ex] = await Promise.all([
       apiFetch<{ messages: Message[] }>(`/api/sessions/${sessionId}/messages`),
       apiFetch<{ evidence: EvidenceItem[] }>(
         `/api/sessions/${sessionId}/evidence`
@@ -68,6 +73,9 @@ export default function SessionPage() {
       apiFetch<{ sessions: DecisionSession[] }>(
         `/api/workspaces/${s.session.workspaceId}/sessions`
       ),
+      apiFetch<{ experiments: ExperimentDefinition[] }>(
+        `/api/sessions/${sessionId}/experiments`
+      ).catch(() => ({ experiments: [] as ExperimentDefinition[] })),
     ]);
     setMessages(msgs.messages);
     setEvidence(ev.evidence);
@@ -75,6 +83,7 @@ export default function SessionPage() {
     setDecision(dec.decision);
     setBlueprint(bp.blueprint);
     setSessions(list.sessions);
+    setExperiments(ex.experiments);
     return s.session;
   }, [sessionId]);
 
@@ -169,6 +178,17 @@ export default function SessionPage() {
           const event = eventLine.slice(6).trim();
           const data = JSON.parse(dataLine.slice(5)) as Record<string, unknown>;
 
+          if (event === "run.started") {
+            const plan = data.executionPlan as
+              | { stages?: string[]; estimatedCalls?: number }
+              | undefined;
+            if (plan) {
+              setExecutionPlan({
+                stages: plan.stages ?? [],
+                estimatedCalls: plan.estimatedCalls ?? 0,
+              });
+            }
+          }
           if (event === "agent.started") {
             commitStreamBubble(currentRole, localStream);
             const role = String(data.role);
@@ -364,6 +384,26 @@ export default function SessionPage() {
     }
   }
 
+  async function exportBlueprint() {
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`/api/sessions/${sessionId}/blueprint/export`, {
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+      if (!res.ok) throw new Error("Export thất bại");
+      const text = await res.text();
+      const blob = new Blob([text], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "blueprint.md";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export blueprint thất bại");
+    }
+  }
+
   if (!session) {
     return <LoadingBlock label="Đang tải Decision Session…" />;
   }
@@ -472,9 +512,12 @@ export default function SessionPage() {
             evidence={evidence}
             decision={decision}
             blueprint={blueprint}
+            experiments={experiments}
+            executionPlan={executionPlan}
             onApproveDecision={approveDecision}
             onGenerateBlueprint={generateBlueprint}
             onApproveBlueprint={approveBlueprint}
+            onExportBlueprint={exportBlueprint}
           />
         </div>
       </div>

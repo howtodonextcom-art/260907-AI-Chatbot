@@ -7,6 +7,7 @@ import {
 } from "@/infrastructure/api/http";
 import { getRepositories } from "@/infrastructure/repositories";
 import { CreateSessionSchema } from "@/domain/decision/schemas";
+import { getDomainPack } from "@/domain-packs/registry";
 
 type Params = { params: Promise<{ workspaceId: string }> };
 
@@ -39,6 +40,12 @@ export async function POST(request: Request, { params }: Params) {
       return jsonError("NOT_FOUND", "Workspace not found", requestId);
     }
     const now = new Date().toISOString();
+    const pack = getDomainPack(
+      body.domainPackId ?? workspace.defaultDomainPackId
+    );
+    const criteria = (pack.getDecisionCriteria?.() ?? []).map((c) => ({
+      ...c,
+    }));
     const session = await repos.sessions.create({
       workspaceId,
       ownerId: user.uid,
@@ -50,7 +57,7 @@ export async function POST(request: Request, { params }: Params) {
       assumptions: [],
       unknowns: [],
       options: [],
-      criteria: [],
+      criteria,
       status: "DISCOVERY",
       createdAt: now,
       updatedAt: now,

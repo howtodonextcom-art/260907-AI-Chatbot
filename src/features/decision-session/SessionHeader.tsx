@@ -52,7 +52,8 @@ export function SessionHeader(props: {
                 props.onRouteModeChange(e.target.value as RouteMode)
               }
               className="lab-input ml-1 min-h-9 px-2 py-1 text-sm"
-              title="QUICK/STANDARD: một Analyst. DEEP: Analyst→Critic→Judge"
+              title="QUICK/STANDARD: một Analyst. DEEP: gọi theo intent, không luôn đủ hội đồng"
+              data-testid="route-mode"
             >
               <option value="QUICK">QUICK — 1 gọi</option>
               <option value="STANDARD">STANDARD — Analyst</option>
@@ -66,6 +67,7 @@ export function SessionHeader(props: {
               value={props.intent}
               onChange={(e) => props.onIntentChange(e.target.value as Intent)}
               className="lab-input ml-1 min-h-9 px-2 py-1 text-sm"
+              data-testid="intent-select"
             >
               <option value="DISCUSS">Thảo luận</option>
               <option value="FRAME_PROBLEM">Định khung</option>

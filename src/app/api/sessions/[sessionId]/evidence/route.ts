@@ -7,7 +7,7 @@ import {
 } from "@/infrastructure/api/http";
 import { getRepositories } from "@/infrastructure/repositories";
 import { CreateEvidenceSchema } from "@/domain/decision/schemas";
-import { DEFAULT_EVIDENCE_RELIABILITY } from "@/domain/evidence/types";
+import { userEvidenceDefaults } from "@/domain/evidence/trust";
 import { AppError } from "@/infrastructure/api/errors";
 
 type Params = { params: Promise<{ sessionId: string }> };
@@ -46,6 +46,7 @@ export async function POST(request: Request, { params }: Params) {
         400
       );
     }
+    const trust = userEvidenceDefaults(body.type);
     const repos = getRepositories();
     const session = await repos.sessions.getBySessionId(sessionId, user.uid);
     if (!session) {
@@ -58,11 +59,11 @@ export async function POST(request: Request, { params }: Params) {
       type: body.type,
       claim: body.claim,
       source: body.source,
-      reliability:
-        body.reliability ?? DEFAULT_EVIDENCE_RELIABILITY[body.type],
-      createdBy: "USER",
+      reliability: trust.reliability,
+      createdBy: trust.createdBy,
       supportsOptionIds: body.supportsOptionIds,
       contradictsOptionIds: body.contradictsOptionIds,
+      verificationStatus: trust.verificationStatus,
       metadata: body.metadata,
       createdAt: new Date().toISOString(),
     });

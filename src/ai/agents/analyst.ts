@@ -40,7 +40,7 @@ export async function runAnalyst(args: {
     ...args.request,
     role: "ANALYST",
     systemInstructions: `${prompt.template}\n\n${args.request.systemInstructions}`,
-    outputSchemaName: "analyst_output_v1",
+    outputSchemaName: args.request.outputSchemaName ?? "analyst_output_v1",
     metadata: {
       ...args.request.metadata,
       promptVersion: prompt.version,

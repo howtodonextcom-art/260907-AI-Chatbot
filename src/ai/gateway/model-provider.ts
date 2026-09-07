@@ -19,6 +19,7 @@ export interface NormalizedModelRequest {
   outputSchemaName?: string;
   maxOutputTokens: number;
   temperature?: number;
+  signal?: AbortSignal;
   metadata: {
     requestId: string;
     workspaceId: string;

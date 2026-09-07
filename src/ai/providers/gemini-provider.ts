@@ -12,6 +12,7 @@ import {
   getDefaultModel,
 } from "@/ai/gateway/model-registry";
 import { AppError } from "@/infrastructure/api/errors";
+import { withAbortSignal } from "@/ai/gateway/abort";
 
 export class GeminiProvider implements ModelProvider {
   id = "gemini";
@@ -59,7 +60,9 @@ export class GeminiProvider implements ModelProvider {
           parts: [{ text: m.content }],
         }));
 
-      const result = await model.generateContent({ contents });
+      const result = await withAbortSignal(request.signal, () =>
+        model.generateContent({ contents })
+      );
       const content = result.response.text();
       const usageMeta = result.response.usageMetadata;
       const inputTokens = usageMeta?.promptTokenCount;

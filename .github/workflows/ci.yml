@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  lint-typecheck-test-build:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,10 +17,24 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: npm i -g firebase-tools
+      - run: pnpm test:rules
+      - run: npx playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          CI: true
+          USE_MEMORY_STORE: "true"
+          DEV_AUTH_BYPASS: "true"
+          USE_STUB_MODELS: "true"
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
       - run: pnpm build
         env:
           USE_MEMORY_STORE: "true"

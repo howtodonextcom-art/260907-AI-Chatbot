@@ -152,6 +152,7 @@ export default function WorkspacesPage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Tên dự án"
+          data-testid="workspace-name"
           className="lab-input px-3 py-2"
         />
         <textarea
@@ -161,10 +162,11 @@ export default function WorkspacesPage() {
           rows={3}
           className="lab-input px-3 py-2"
         />
-        <select
+          <select
           value={domainPackId}
           onChange={(e) => setDomainPackId(e.target.value)}
           className="lab-input px-3 py-2"
+          data-testid="domain-pack"
         >
           <option value="generic-decision">Generic Decision Workflow</option>
           <option value="challengeready">ChallengeReady (reference pack)</option>
@@ -173,6 +175,7 @@ export default function WorkspacesPage() {
           type="submit"
           disabled={creating}
           className="lab-btn lab-btn-primary justify-self-start"
+          data-testid="create-workspace"
         >
           {creating ? "Đang tạo…" : "Tạo Workspace"}
         </button>
