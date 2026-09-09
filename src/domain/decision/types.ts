@@ -170,6 +170,8 @@ export interface WorkflowStageArtifact {
     newContradiction?: boolean;
     newEvidenceRequirement?: boolean;
     materialDecisionChange?: boolean;
+    /** True when DeepSeek SecondOpinion completed for CURRENT OPTIONS. */
+    secondOpinion?: boolean;
   };
 }
 

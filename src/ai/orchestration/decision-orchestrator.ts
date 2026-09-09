@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { DEFAULT_BUDGETS } from "@/config/ai-budget";
-import { ModelGateway } from "@/ai/gateway/model-gateway";
+import { ModelGateway, resolveProviderForRole } from "@/ai/gateway/model-gateway";
 import { runAnalyst } from "@/ai/agents/analyst";
 import { runCritic } from "@/ai/agents/critic";
 import { runJudge } from "@/ai/agents/judge";
@@ -53,6 +53,7 @@ import {
 import {
   mergeDebateNotes,
   recordLastRunRole,
+  hasSecondOpinionContribution,
 } from "@/domain/decision/debate-notes";
 
 /**
@@ -201,10 +202,9 @@ export async function* runDecisionOrchestrator(args: {
     highUnknownCount >= 2 ||
     (args.session.problem.trim().length < 80 &&
       args.session.constraints.length === 0);
-  const soArtifact = args.session.workflow?.artifacts.OPTIONS;
-  const secondOpinionAlreadyContributed =
-    soArtifact?.status === "CURRENT" &&
-    (soArtifact.agentRunIds?.length ?? 0) > 0;
+  const secondOpinionAlreadyContributed = hasSecondOpinionContribution(
+    args.session.workflow
+  );
 
   const routing = decideRouting({
     routeMode: args.routeMode,
@@ -221,6 +221,7 @@ export async function* runDecisionOrchestrator(args: {
     frameNeedsChallenge,
     secondOpinionAlreadyContributed,
     materialFactsChanged: Boolean(workflowDecision.invalidatedFromStage),
+    userRequestedChallenge: args.intent === "CRITIQUE",
   });
 
   const priorState = args.session.workflow?.state;
@@ -405,6 +406,8 @@ export async function* runDecisionOrchestrator(args: {
   let totalCost = 0;
   let debateNotes = args.session.workflow?.debateNotes;
   let lastRunRoles: WorkflowLastRunRole[] = [];
+  const completedRunIds: string[] = [];
+  let secondOpinionRunId: string | undefined;
 
   const spend = canSpend(tracker, budget);
   if (!spend.ok) {
@@ -561,6 +564,7 @@ export async function* runDecisionOrchestrator(args: {
       status: "COMPLETED",
       provider: analyst.provider,
     });
+    completedRunIds.push(analystRun.id);
   } catch (error) {
     const cancelled = isCancelledError(error) || Boolean(args.signal?.aborted);
     await args.repos.agentRuns.update(
@@ -722,6 +726,8 @@ export async function* runDecisionOrchestrator(args: {
         status: "COMPLETED",
         provider: secondOpinion.provider,
       });
+      completedRunIds.push(secondOpinionRun.id);
+      secondOpinionRunId = secondOpinionRun.id;
       debateNotes = mergeDebateNotes(debateNotes, {
         divergentRisks: secondOpinion.structured?.divergentRisks ?? [],
         soRecommendedDirection: secondOpinion.structured?.recommendedDirection,
@@ -900,13 +906,33 @@ export async function* runDecisionOrchestrator(args: {
             provider: critic.provider,
           },
         };
+        const preferredCritic = resolveProviderForRole("CRITIC", args.routeMode);
         lastRunRoles = recordLastRunRole(lastRunRoles, {
           role: "CRITIC",
           status: "COMPLETED",
           provider: critic.provider,
+          message:
+            critic.provider !== preferredCritic
+              ? `fallback from ${preferredCritic}`
+              : undefined,
         });
+        completedRunIds.push(criticRun.id);
+        if (critic.provider !== preferredCritic) {
+          yield {
+            event: "run.partial",
+            data: {
+              role: "CRITIC",
+              message: `Critic fallback from ${preferredCritic} → ${critic.provider}`,
+            },
+          };
+        }
         debateNotes = mergeDebateNotes(debateNotes, {
-          criticisms: critic.structured?.criticisms ?? [],
+          criticisms:
+            critic.structured?.criticisms?.length
+              ? critic.structured.criticisms
+              : criticContent
+                ? [criticContent.slice(0, 500)]
+                : [],
           unsupportedAssumptions: critic.structured?.unsupportedAssumptions ?? [],
           missingEvidence: critic.structured?.missingEvidence ?? [],
           updatedAt: new Date().toISOString(),
@@ -1140,6 +1166,7 @@ export async function* runDecisionOrchestrator(args: {
           status: "COMPLETED",
           provider: judge.provider,
         });
+        completedRunIds.push(judgeRun.id);
       } catch (error) {
         partial = true;
         await args.repos.agentRuns.update(
@@ -1194,7 +1221,7 @@ export async function* runDecisionOrchestrator(args: {
           routeMode: args.routeMode,
         },
         completedStage: workflowStage,
-        agentRunIds: [],
+        agentRunIds: completedRunIds,
         usage: {
           calls: tracker.calls,
           inputTokens: tracker.inputTokens,
@@ -1218,7 +1245,7 @@ export async function* runDecisionOrchestrator(args: {
       blockers: postDecision.blockers,
     },
     completedStage: workflowStage,
-    agentRunIds: [],
+    agentRunIds: completedRunIds,
     usage: {
       calls: tracker.calls,
       inputTokens: tracker.inputTokens,
@@ -1231,6 +1258,22 @@ export async function* runDecisionOrchestrator(args: {
     nextWorkflow.artifacts[workflowStage] = {
       ...nextWorkflow.artifacts[workflowStage]!,
       summary: stageSummary.slice(0, 8000),
+    };
+  }
+  if (secondOpinionRunId) {
+    const optionsArt = nextWorkflow.artifacts.OPTIONS;
+    const nowIso = new Date().toISOString();
+    const ids = [...(optionsArt?.agentRunIds ?? [])];
+    if (!ids.includes(secondOpinionRunId)) ids.push(secondOpinionRunId);
+    nextWorkflow.artifacts.OPTIONS = {
+      agentRunIds: ids,
+      status: optionsArt?.status ?? "CURRENT",
+      updatedAt: nowIso,
+      summary: optionsArt?.summary,
+      contributions: {
+        ...optionsArt?.contributions,
+        secondOpinion: true,
+      },
     };
   }
   nextWorkflow.debateNotes = debateNotes;

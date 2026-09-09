@@ -100,6 +100,20 @@ describe("execution plan — Mode × Stage matrix", () => {
     expect(r.runSecondOpinion).toBe(false);
   });
 
+  it("DEEP CRITIQUE re-runs SO when userRequestedChallenge even if already contributed", () => {
+    const r = decideRouting({
+      routeMode: "DEEP",
+      intent: "CRITIQUE",
+      evidenceCoverage: 0.5,
+      importance: "HIGH",
+      hasDeepseek: true,
+      secondOpinionAlreadyContributed: true,
+      userRequestedChallenge: true,
+    });
+    expect(r.runSecondOpinion).toBe(true);
+    expect(r.runCritic).toBe(true);
+  });
+
   it("DEEP PREPARE is Judge only — no full council rerun", () => {
     const r = decideRouting({
       routeMode: "DEEP",

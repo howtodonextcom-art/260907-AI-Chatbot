@@ -311,6 +311,132 @@ describe("automatic workflow without manual Intent (v17)", () => {
         (o) => o.proposedBy === "SECOND_OPINION" && o.title === "Challenge Gym"
       )
     ).toBe(true);
+    expect(session.workflow?.artifacts.OPTIONS?.contributions?.secondOpinion).toBe(
+      true
+    );
+    expect(session.workflow?.artifacts.OPTIONS?.agentRunIds.length).toBeGreaterThan(
+      0
+    );
+
+    const critiqueEvents = await drain(
+      runDecisionOrchestrator({
+        repos,
+        session,
+        ownerId: "u1",
+        routeMode: "DEEP",
+        userRequest: "Tiếp tục quy trình quyết định theo giai đoạn tiếp theo.",
+        requestId: "req-critique",
+        gateway,
+      })
+    );
+    expect(critiqueEvents.some((e) => e.event === "run.failed")).toBe(false);
+    session = (await repos.sessions.getBySessionId(session.id, "u1"))!;
+    expect(session.workflow?.lastRun?.stage).toBe("CRITIQUE");
+    expect(session.workflow?.lastRun?.plannedStages).not.toContain(
+      "SECOND_OPINION"
+    );
+    const soRuns = (await repos.agentRuns.listBySession(
+      session.workspaceId,
+      session.id,
+      "u1"
+    )).filter((r) => r.role === "SECOND_OPINION");
+    expect(soRuns).toHaveLength(1);
+  });
+
+  it("DEEP CRITIQUE runs Critic despite HIGH OPEN unknowns", async () => {
+    process.env.ENABLE_SECOND_OPINION = "true";
+    process.env.DEEPSEEK_API_KEY = "sk-test";
+    resetEnvCache();
+
+    const repos = getRepositories();
+    const now = new Date().toISOString();
+    let session = await seedSession();
+    session = await repos.sessions.update(session.workspaceId, session.id, "u1", {
+      latestSummary: "Framed FTMO training as rehearsal-only MVP.",
+      options: [
+        {
+          id: "o1",
+          title: "Readiness Lab MVP",
+          description: "Simulated challenges only",
+          pros: ["Safe"],
+          cons: ["Narrow"],
+          risks: ["Low adoption"],
+          evidenceIds: [],
+          status: "PROPOSED",
+          proposedBy: "ANALYST",
+        },
+      ],
+      unknowns: [
+        {
+          id: "u1",
+          question: "Latest FTMO news-trading rules?",
+          importance: "HIGH",
+          resolution: "OPEN",
+          evidenceIds: [],
+        },
+      ],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "OPTIONS",
+        completedStages: ["FRAME", "OPTIONS"],
+        artifacts: {
+          FRAME: { agentRunIds: ["r1"], status: "CURRENT", updatedAt: now },
+          OPTIONS: {
+            agentRunIds: ["so-1"],
+            status: "CURRENT",
+            updatedAt: now,
+            contributions: { secondOpinion: true },
+          },
+        },
+        debateNotes: {
+          criticisms: [],
+          unsupportedAssumptions: [],
+          missingEvidence: [],
+          divergentRisks: ["Over-claiming"],
+          soPreferredOptionTitle: "Readiness Lab MVP",
+        },
+      },
+    });
+    await repos.messages.create({
+      workspaceId: session.workspaceId,
+      sessionId: session.id,
+      ownerId: "u1",
+      role: "USER",
+      content: "Tiếp tục quy trình quyết định theo giai đoạn tiếp theo.",
+      createdAt: now,
+    });
+
+    const gemini = scriptedProvider("gemini", [optionsJson()]);
+    const groq = scriptedProvider("groq", [critiqueJson()]);
+    const deepseek = scriptedProvider("deepseek", [soJson()]);
+    const gateway = new ModelGateway([gemini, groq, deepseek]);
+
+    const events = await drain(
+      runDecisionOrchestrator({
+        repos,
+        session,
+        ownerId: "u1",
+        routeMode: "DEEP",
+        userRequest: "Tiếp tục quy trình quyết định theo giai đoạn tiếp theo.",
+        requestId: "req-groq-critique",
+        gateway,
+      })
+    );
+
+    expect(events.some((e) => e.event === "run.failed")).toBe(false);
+    session = (await repos.sessions.getBySessionId(session.id, "u1"))!;
+    expect(session.workflow?.lastRun?.stage).toBe("CRITIQUE");
+    expect(session.workflow?.lastRun?.plannedStages).toContain("CRITIC");
+    expect(session.workflow?.lastRun?.plannedStages).not.toContain(
+      "SECOND_OPINION"
+    );
+    const critic = (await repos.agentRuns.listBySession(
+      session.workspaceId,
+      session.id,
+      "u1"
+    )).find((r) => r.role === "CRITIC");
+    expect(critic?.provider).toBe("groq");
+    expect(critic?.status).toBe("COMPLETED");
   });
 
   it("pauses on HIGH Unknown and resumes after resolution", async () => {

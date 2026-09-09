@@ -91,10 +91,13 @@ export function ChatPanel(props: {
               }}
               data-testid="deep-stage-hint"
             >
-              {props.workflow?.currentStage === "OPTIONS" ||
-              props.workflow?.completedStages?.includes("OPTIONS")
-                ? "DEEP: Critic (Groq) chạy ở CRITIQUE; Judge (Gemini) ở PREPARE. Gửi = một giai đoạn; Bắt đầu phân tích = cả pipeline."
-                : "Bước DISCUSS/FRAME chỉ Analyst (Gemini). Critic/Groq và SecondOpinion/DeepSeek chạy ở OPTIONS và CRITIQUE — dùng Bắt đầu phân tích để đi hết quy trình."}
+              {props.workflow?.artifacts?.CRITIQUE?.status === "CURRENT"
+                ? "DEEP: Critic (Groq) đã chạy. Judge (Gemini) ở PREPARE — HIGH Unknown vẫn chặn duyệt quyết định."
+                : props.workflow?.currentStage === "OPTIONS" ||
+                    props.workflow?.completedStages?.includes("OPTIONS") ||
+                    props.workflow?.artifacts?.OPTIONS?.status === "CURRENT"
+                  ? "Bước tiếp theo: CRITIQUE — Critic (Groq). Gửi = một giai đoạn (chạy Groq ngay). Bắt đầu phân tích = tiếp pipeline."
+                  : "Bước DISCUSS/FRAME chỉ Analyst (Gemini). OPTIONS = DeepSeek. Bước sau OPTIONS là CRITIQUE (Groq) — không bị chặn bởi Unknown HIGH."}
             </div>
           ) : null}
 

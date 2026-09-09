@@ -112,6 +112,77 @@ describe("decideWorkflowStage", () => {
     expect(d.nextStage).toBe("CRITIQUE");
   });
 
+  it("OPTIONS CURRENT + HIGH OPEN unknown → CRITIQUE (not PAUSED)", () => {
+    const session = baseSession({
+      latestSummary: "Framed",
+      options: [
+        {
+          id: "o1",
+          title: "A",
+          description: "d",
+          pros: [],
+          cons: [],
+          risks: [],
+          evidenceIds: [],
+          status: "PROPOSED",
+          proposedBy: "ANALYST",
+        },
+      ],
+      unknowns: [
+        {
+          id: "u1",
+          question: "Upload MT4 or API?",
+          importance: "HIGH",
+          resolution: "OPEN",
+          evidenceIds: [],
+        },
+      ],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "OPTIONS",
+        completedStages: ["FRAME", "OPTIONS"],
+        artifacts: {
+          FRAME: {
+            agentRunIds: ["r1"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+          OPTIONS: {
+            agentRunIds: ["r2"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const d = decideWorkflowStage({ session, routeMode: "DEEP" });
+    expect(d.nextStage).toBe("CRITIQUE");
+    expect(d.shouldAdvance).toBe(true);
+    expect(d.state).toBe("RUNNING");
+  });
+
+  it("continue-workflow messages do not invalidate OPTIONS", () => {
+    expect(
+      detectMaterialInvalidation({
+        session: baseSession({
+          options: [
+            {
+              id: "o1",
+              title: "A",
+              description: "d",
+              pros: [],
+              cons: [],
+              risks: [],
+              evidenceIds: [],
+              status: "PROPOSED",
+            },
+          ],
+        }),
+        lastHumanMessage: "Tiếp tục quy trình quyết định theo giai đoạn tiếp theo.",
+      })
+    ).toBeNull();
+  });
+
   it("CRITIQUE complete → VERIFY when assumptions need tools", () => {
     const session = baseSession({
       latestSummary: "Framed",
@@ -220,7 +291,7 @@ describe("decideWorkflowStage", () => {
     expect(d.nextStage).toBe("PREPARE");
   });
 
-  it("HIGH Unknown → PAUSED after options", () => {
+  it("HIGH Unknown → PAUSED after CRITIQUE (not before Groq)", () => {
     const session = baseSession({
       latestSummary: "Framed",
       options: [
@@ -484,6 +555,26 @@ describe("applyWorkflowProgress", () => {
     });
     expect(wf.completedStages).toContain("FRAME");
     expect(wf.artifacts.FRAME?.status).toBe("CURRENT");
+    expect(wf.artifacts.FRAME?.agentRunIds).toEqual(["run-1"]);
     expect(wf.usage.calls).toBe(1);
+  });
+
+  it("preserves artifact contributions when appending run ids", () => {
+    const first = applyWorkflowProgress({
+      workflow: emptyWorkflowMetadata("DEEP"),
+      completedStage: "OPTIONS",
+      agentRunIds: ["analyst-1"],
+    });
+    first.artifacts.OPTIONS = {
+      ...first.artifacts.OPTIONS!,
+      contributions: { secondOpinion: true },
+    };
+    const second = applyWorkflowProgress({
+      workflow: first,
+      completedStage: "OPTIONS",
+      agentRunIds: ["so-1"],
+    });
+    expect(second.artifacts.OPTIONS?.agentRunIds).toEqual(["analyst-1", "so-1"]);
+    expect(second.artifacts.OPTIONS?.contributions?.secondOpinion).toBe(true);
   });
 });

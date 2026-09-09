@@ -1,4 +1,8 @@
-import type { DebateNotes, WorkflowLastRunRole } from "@/domain/decision/types";
+import type {
+  DebateNotes,
+  WorkflowLastRunRole,
+  WorkflowMetadata,
+} from "@/domain/decision/types";
 
 export function emptyDebateNotes(): DebateNotes {
   return {
@@ -70,4 +74,21 @@ export function recordLastRunRole(
   const next = roles.filter((r) => r.role !== entry.role);
   next.push(entry);
   return next;
+}
+
+/** OPTIONS artifact (or debateNotes) already has a completed independent SO. */
+export function hasSecondOpinionContribution(
+  workflow: WorkflowMetadata | undefined
+): boolean {
+  if (!workflow) return false;
+  if (
+    workflow.artifacts.OPTIONS?.status === "CURRENT" &&
+    workflow.artifacts.OPTIONS.contributions?.secondOpinion
+  ) {
+    return true;
+  }
+  const notes = workflow.debateNotes;
+  return Boolean(
+    notes?.soRecommendedDirection?.trim() || notes?.soPreferredOptionTitle?.trim()
+  );
 }

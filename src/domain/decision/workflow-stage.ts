@@ -191,15 +191,17 @@ export function decideWorkflowStage(args: {
   });
 
   const pauseBlockers = collectPauseBlockers(session);
-  // After OPTIONS, human blockers pause before continuing CRITIQUE/VERIFY/PREPARE
-  // only when we already have options and are past framing — still allow FRAME/OPTIONS
-  // to run so the lab can surface unknowns.
+  // After OPTIONS, still run CRITIQUE (DEEP: Groq Critic) even if HIGH
+  // unknowns are OPEN — critique is not a legal Decision gate. Pause for
+  // human unknown-resolution before PREPARE (and still block DECISION_READY).
   const pastOptions =
     session.options.length > 0 &&
     (hasCurrentArtifact(workflow, "OPTIONS") ||
       workflow.completedStages.includes("OPTIONS"));
+  const critiquePending =
+    routeMode !== "QUICK" && !hasCurrentArtifact(workflow, "CRITIQUE");
 
-  if (pauseBlockers.length > 0 && pastOptions) {
+  if (pauseBlockers.length > 0 && pastOptions && !critiquePending) {
     // Still allow VERIFY to attempt tool resolution when unknowns ask VERIFY_NOW
     // and VERIFY artifact is missing — otherwise pause for human.
     const allowVerifyDespitePause =
@@ -327,11 +329,13 @@ export function detectMaterialInvalidation(args: {
   const msg = args.lastHumanMessage?.trim() ?? "";
   if (!msg) return null;
 
-  // No-op acknowledgements
+  // No-op acknowledgements and automatic-workflow continue prompts
   if (
     /^(ok|okay|thanks|cảm ơn|tiếp|tiếp tục|continue|yes|no|ừ|được)\.?$/i.test(
       msg
     ) ||
+    /tiếp tục quy trình/i.test(msg) ||
+    /^continue the automatic decision workflow\.?$/i.test(msg) ||
     msg.length < 12
   ) {
     return null;
@@ -387,9 +391,11 @@ export function applyWorkflowProgress(args: {
   completed.add(args.completedStage);
 
   const artifacts = { ...args.workflow.artifacts };
+  const previous = artifacts[args.completedStage];
   artifacts[args.completedStage] = {
+    ...previous,
     agentRunIds: [
-      ...(artifacts[args.completedStage]?.agentRunIds ?? []),
+      ...(previous?.agentRunIds ?? []),
       ...(args.agentRunIds ?? []),
     ],
     status: "CURRENT",

@@ -17,7 +17,7 @@ const MODE_HINT: Record<
   DEEP: {
     pipeline: "Theo giai đoạn: FRAME→OPTIONS→CRITIQUE→VERIFY→PREPARE",
     debate:
-      "Gửi = 1 giai đoạn (StageController). OPTIONS: Analyst+DeepSeek · CRITIQUE: Critic/Groq · PREPARE: Judge. DISCUSS/FRAME chỉ Analyst.",
+      "Gửi = 1 giai đoạn (StageController). OPTIONS: Analyst+DeepSeek · rồi CRITIQUE: Critic/Groq (không pause vì Unknown HIGH). PREPARE: Judge. DISCUSS/FRAME chỉ Analyst.",
   },
 };
 
