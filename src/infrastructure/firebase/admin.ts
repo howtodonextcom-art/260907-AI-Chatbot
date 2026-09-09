@@ -72,18 +72,26 @@ export function getAdminAuth(): Auth {
   return admin.auth();
 }
 
-let firestoreSettingsApplied = false;
+const firestoreSettingsFlag = globalThis as typeof globalThis & {
+  __layeraFirestoreSettingsApplied?: boolean;
+};
 
 export function getAdminDb(): Firestore {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const admin = require("firebase-admin") as typeof import("firebase-admin");
   getAdminApp();
   const db = admin.firestore();
-  if (!firestoreSettingsApplied) {
+  if (!firestoreSettingsFlag.__layeraFirestoreSettingsApplied) {
     // Optional fields (e.g. Workspace.description, DecisionSession.objective)
     // are `undefined` when absent — Firestore rejects that by default.
-    db.settings({ ignoreUndefinedProperties: true });
-    firestoreSettingsApplied = true;
+    // Persist the flag on globalThis so Turbopack HMR does not call settings() twice.
+    try {
+      db.settings({ ignoreUndefinedProperties: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (!msg.includes("already been initialized")) throw err;
+    }
+    firestoreSettingsFlag.__layeraFirestoreSettingsApplied = true;
   }
   return db;
 }
@@ -109,5 +117,5 @@ export async function verifyIdToken(token: string) {
 /** Test helper — clears cached Admin app (does not delete firebase-admin apps). */
 export function resetAdminAppCache(): void {
   app = null;
-  firestoreSettingsApplied = false;
+  firestoreSettingsFlag.__layeraFirestoreSettingsApplied = false;
 }

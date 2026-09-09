@@ -38,15 +38,12 @@ export class FirestoreDecisionRecordRepository
     sessionId: string,
     ownerId: string
   ): Promise<DecisionRecord | null> {
-    const snap = await this.col()
-      .where("sessionId", "==", sessionId)
-      .where("ownerId", "==", ownerId)
-      .orderBy("createdAt", "desc")
-      .limit(1)
-      .get();
-    if (snap.empty) return null;
-    const d = snap.docs[0];
-    return { ...(d.data() as DecisionRecord), id: d.id };
+    const snap = await this.col().where("sessionId", "==", sessionId).get();
+    const records = snap.docs
+      .map((d) => ({ ...(d.data() as DecisionRecord), id: d.id }))
+      .filter((r) => r.ownerId === ownerId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return records[0] ?? null;
   }
 }
 
@@ -76,15 +73,12 @@ export class FirestoreBlueprintRepository implements BlueprintRepository {
     sessionId: string,
     ownerId: string
   ): Promise<Blueprint | null> {
-    const snap = await this.col()
-      .where("sessionId", "==", sessionId)
-      .where("ownerId", "==", ownerId)
-      .orderBy("createdAt", "desc")
-      .limit(1)
-      .get();
-    if (snap.empty) return null;
-    const d = snap.docs[0];
-    return { ...(d.data() as Blueprint), id: d.id };
+    const snap = await this.col().where("sessionId", "==", sessionId).get();
+    const records = snap.docs
+      .map((d) => ({ ...(d.data() as Blueprint), id: d.id }))
+      .filter((r) => r.ownerId === ownerId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return records[0] ?? null;
   }
 
   async updateStatus(

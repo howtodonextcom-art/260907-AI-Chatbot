@@ -417,6 +417,26 @@ export default function SessionPage() {
   }
 
   if (!session) {
+    if (error) {
+      return (
+        <div className="flex min-h-screen flex-col">
+          <ErrorBanner
+            message={error}
+            onRetry={() => {
+              setError(null);
+              void loadAll().catch((e) =>
+                setError(e instanceof Error ? e.message : "Không tải được session")
+              );
+            }}
+          />
+          <div className="p-6">
+            <Link href="/workspaces" className="text-sm underline">
+              Về Workspaces
+            </Link>
+          </div>
+        </div>
+      );
+    }
     return <LoadingBlock label="Đang tải Decision Session…" />;
   }
 

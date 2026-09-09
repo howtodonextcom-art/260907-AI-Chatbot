@@ -56,12 +56,13 @@ export class FirestoreDecisionSessionRepository
   ): Promise<DecisionSession[]> {
     const snap = await this.col(workspaceId)
       .where("ownerId", "==", ownerId)
-      .orderBy("updatedAt", "desc")
       .get();
-    return snap.docs.map((d) => ({
-      ...(d.data() as DecisionSession),
-      id: d.id,
-    }));
+    return snap.docs
+      .map((d) => ({
+        ...(d.data() as DecisionSession),
+        id: d.id,
+      }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   async update(

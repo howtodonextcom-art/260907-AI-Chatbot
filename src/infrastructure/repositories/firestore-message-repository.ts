@@ -34,9 +34,10 @@ export class FirestoreMessageRepository implements MessageRepository {
     const snap = await sessionPath(workspaceId, sessionId)
       .collection("messages")
       .where("ownerId", "==", ownerId)
-      .orderBy("createdAt", "asc")
       .get();
-    return snap.docs.map((d) => ({ ...(d.data() as Message), id: d.id }));
+    return snap.docs
+      .map((d) => ({ ...(d.data() as Message), id: d.id }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 }
 
@@ -114,9 +115,10 @@ export class FirestoreAgentRunRepository implements AgentRunRepository {
     const snap = await sessionPath(workspaceId, sessionId)
       .collection("agentRuns")
       .where("ownerId", "==", ownerId)
-      .orderBy("startedAt", "desc")
       .get();
-    return snap.docs.map((d) => ({ ...(d.data() as AgentRun), id: d.id }));
+    return snap.docs
+      .map((d) => ({ ...(d.data() as AgentRun), id: d.id }))
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   }
 
   async getById(

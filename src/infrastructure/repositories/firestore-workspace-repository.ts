@@ -24,12 +24,11 @@ export class FirestoreWorkspaceRepository implements WorkspaceRepository {
   }
 
   async listByOwner(ownerId: string): Promise<Workspace[]> {
-    const snap = await this.col()
-      .where("ownerId", "==", ownerId)
-      .where("status", "==", "ACTIVE")
-      .orderBy("updatedAt", "desc")
-      .get();
-    return snap.docs.map((d) => ({ ...(d.data() as Workspace), id: d.id }));
+    const snap = await this.col().where("ownerId", "==", ownerId).get();
+    return snap.docs
+      .map((d) => ({ ...(d.data() as Workspace), id: d.id }))
+      .filter((w) => w.status === "ACTIVE")
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   async update(
