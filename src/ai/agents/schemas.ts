@@ -47,6 +47,13 @@ export const AnalystOutputSchema = z.object({
       })
     )
     .default([]),
+  constraints: z
+    .array(
+      z.object({
+        statement: z.string(),
+      })
+    )
+    .default([]),
   suggestedStatus: z
     .enum(["DISCOVERY", "VALIDATING", "DECISION_READY"])
     .optional(),
@@ -112,6 +119,17 @@ export const SecondOpinionOutputSchema = z.object({
   reply: z.string(),
   recommendedDirection: z.string(),
   preferredOptionTitle: z.string().optional(),
+  independentOptions: z
+    .array(
+      z.object({
+        title: z.string(),
+        description: z.string(),
+        pros: z.array(z.string()).default([]),
+        cons: z.array(z.string()).default([]),
+        risks: z.array(z.string()).default([]),
+      })
+    )
+    .default([]),
   keyAssumptions: z.array(z.string()).default([]),
   divergentRisks: z.array(z.string()).default([]),
   additionalRisks: z.array(z.string()).default([]),
@@ -237,6 +255,17 @@ export function normalizeAnalystPayload(raw: unknown): unknown {
     unknowns,
     options,
     suggestedStatus: o.suggestedStatus ?? o.suggested_status,
+    constraints: Array.isArray(o.constraints)
+      ? o.constraints
+          .map((item) => {
+            const c = asRecord(item);
+            if (!c) return null;
+            const statement = pickString(c.statement, c.text, c.description);
+            if (!statement) return null;
+            return { statement };
+          })
+          .filter(Boolean)
+      : [],
   };
 }
 

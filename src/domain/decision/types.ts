@@ -103,6 +103,8 @@ export interface Criterion {
   confirmedByUser: boolean;
 }
 
+export type OptionProposedBy = "ANALYST" | "SECOND_OPINION" | "USER";
+
 export interface Option {
   id: string;
   title: string;
@@ -119,6 +121,111 @@ export interface Option {
   evidenceIds: string[];
   criterionScores?: Record<string, number>;
   status: OptionStatus;
+  /** Provenance — who proposed this option into canonical DecisionState. */
+  proposedBy?: OptionProposedBy;
+}
+
+/**
+ * Orchestration/UX stage — independent of DecisionSessionStatus legal gates.
+ * Human still owns DECIDED via approveDecision(); StageController never
+ * auto-approves.
+ */
+export type WorkflowStage =
+  | "DISCUSS"
+  | "FRAME"
+  | "OPTIONS"
+  | "CRITIQUE"
+  | "VERIFY"
+  | "PREPARE";
+
+export type WorkflowState =
+  | "IDLE"
+  | "RUNNING"
+  | "PAUSED"
+  | "BLOCKED"
+  | "COMPLETED";
+
+export type WorkflowArtifactStatus = "CURRENT" | "STALE";
+
+export type WorkflowBlockerCode =
+  | "HIGH_UNKNOWNS_OPEN"
+  | "EXPERIMENT_REQUIRED"
+  | "HUMAN_DECISION_REQUIRED"
+  | "EVIDENCE_CONTRADICTION"
+  | "BUDGET_EXHAUSTED"
+  | "DECISION_READY"
+  | "DECIDED";
+
+export interface WorkflowStageArtifact {
+  agentRunIds: string[];
+  status: WorkflowArtifactStatus;
+  updatedAt: ISODateTime;
+  /** Canonical prose/JSON substrate for later stages (not CoT). */
+  summary?: string;
+  /** Optional structured contribution flags for cost/information-gain eval. */
+  contributions?: {
+    newOption?: boolean;
+    newAssumption?: boolean;
+    newRisk?: boolean;
+    newContradiction?: boolean;
+    newEvidenceRequirement?: boolean;
+    materialDecisionChange?: boolean;
+  };
+}
+
+/** Canonical disagreement substrate for Canvas — not chat prose. */
+export interface DebateNotes {
+  criticisms: string[];
+  unsupportedAssumptions: string[];
+  missingEvidence: string[];
+  divergentRisks: string[];
+  soRecommendedDirection?: string;
+  soPreferredOptionTitle?: string;
+  updatedAt?: ISODateTime;
+}
+
+export interface WorkflowLastRunRole {
+  role: string;
+  status: "COMPLETED" | "FAILED" | "SKIPPED";
+  provider?: string;
+  message?: string;
+}
+
+/** Last orchestrator tick — chips after refresh, including silent failures. */
+export interface WorkflowLastRun {
+  stage: WorkflowStage;
+  plannedStages: string[];
+  roles: WorkflowLastRunRole[];
+  at: ISODateTime;
+}
+
+export interface WorkflowMetadata {
+  currentStage: WorkflowStage;
+  state: WorkflowState;
+  completedStages: WorkflowStage[];
+  routeMode: RouteMode;
+  artifacts: Partial<Record<WorkflowStage, WorkflowStageArtifact>>;
+  blockers: WorkflowBlockerCode[];
+  usage: {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  };
+  debateNotes?: DebateNotes;
+  lastRun?: WorkflowLastRun;
+  invalidatedFromStage?: WorkflowStage;
+  updatedAt?: ISODateTime;
+}
+
+export interface WorkflowDecision {
+  currentStage: WorkflowStage;
+  nextStage: WorkflowStage | null;
+  shouldAdvance: boolean;
+  state: WorkflowState;
+  blockers: WorkflowBlockerCode[];
+  rationale: string;
+  invalidatedFromStage?: WorkflowStage;
 }
 
 export interface DecisionSession {
@@ -139,6 +246,8 @@ export interface DecisionSession {
   activeBlueprintId?: string;
   latestSummary?: string;
   judgeDraft?: JudgeDraft;
+  /** Server-owned automatic decision workflow (v17). */
+  workflow?: WorkflowMetadata;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   archivedAt?: ISODateTime;

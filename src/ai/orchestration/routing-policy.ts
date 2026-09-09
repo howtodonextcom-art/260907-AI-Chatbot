@@ -1,5 +1,6 @@
 export {
   decideRouting,
+  roleTokenCeiling,
   type ExecutionPlan,
   type ExecutionStage,
   type OrchestratorIntent,

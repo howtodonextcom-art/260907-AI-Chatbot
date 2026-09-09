@@ -117,15 +117,16 @@ describe("routing", () => {
     expect(r.runJudge).toBe(false);
   });
 
-  it("DEEP can include critic and judge", () => {
+  it("DEEP PREPARE is Judge only (no Analyst/Critic/SO rerun)", () => {
     const r = decideRouting({
       routeMode: "DEEP",
       intent: "PREPARE_DECISION",
       evidenceCoverage: 0.2,
       importance: "HIGH",
     });
-    expect(r.runAnalyst).toBe(true);
-    expect(r.runCritic).toBe(true);
+    expect(r.runAnalyst).toBe(false);
+    expect(r.runCritic).toBe(false);
+    expect(r.runSecondOpinion).toBe(false);
     expect(r.runJudge).toBe(true);
   });
 });

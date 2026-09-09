@@ -59,6 +59,15 @@ export async function POST(request: Request, { params }: Params) {
       options: [],
       criteria,
       status: "DISCOVERY",
+      workflow: {
+        currentStage: "DISCUSS",
+        state: "IDLE",
+        completedStages: [],
+        routeMode: "STANDARD",
+        artifacts: {},
+        blockers: [],
+        usage: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      },
       createdAt: now,
       updatedAt: now,
     });

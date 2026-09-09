@@ -34,6 +34,7 @@ export const OptionSchema = z.object({
   status: z.enum(["PROPOSED", "SHORTLISTED", "REJECTED", "SELECTED"]),
   implementationComplexity: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
   criterionScores: z.record(z.number()).optional(),
+  proposedBy: z.enum(["ANALYST", "SECOND_OPINION", "USER"]).optional(),
 });
 
 export const AssumptionSchema = z.object({
@@ -126,14 +127,17 @@ export const CreateMessageSchema = z.object({
 
 export const RunSessionSchema = z.object({
   routeMode: z.enum(["QUICK", "STANDARD", "DEEP"]),
-  intent: z.enum([
-    "DISCUSS",
-    "FRAME_PROBLEM",
-    "GENERATE_OPTIONS",
-    "CRITIQUE",
-    "VERIFY",
-    "PREPARE_DECISION",
-  ]),
+  /** Optional — when omitted, StageController picks the next WorkflowStage. */
+  intent: z
+    .enum([
+      "DISCUSS",
+      "FRAME_PROBLEM",
+      "GENERATE_OPTIONS",
+      "CRITIQUE",
+      "VERIFY",
+      "PREPARE_DECISION",
+    ])
+    .optional(),
   messageId: z.string().optional(),
 });
 

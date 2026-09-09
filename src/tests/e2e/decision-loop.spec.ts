@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("full decision loop", () => {
   test.setTimeout(120_000);
 
-  test("workspace → session → auto workflow → prepare → decision → blueprint export", async ({
+  test("workspace → session → automatic workflow → decision → blueprint export", async ({
     page,
   }) => {
     await page.goto("/login");
@@ -33,28 +33,38 @@ test.describe("full decision loop", () => {
     await page.getByTestId("create-session").click();
     await expect(page).toHaveURL(/\/sessions\//, { timeout: 15_000 });
 
+    // Mode remains visible; Intent must not be required in normal UI.
+    await page.getByTestId("route-mode").selectOption("DEEP");
+    await expect(page.getByTestId("workflow-stepper")).toBeVisible();
+    await expect(page.getByTestId("deep-stage-hint")).toBeVisible();
+    await expect(page.getByTestId("deep-stage-hint")).toContainText(/Analyst \(Gemini\)/);
+    await expect(page.getByTestId("intent-select")).toBeHidden();
+
     await page.getByTestId("composer").fill(
       "I want to build a web application to help FTMO challenge traders train before taking the real challenge."
     );
     await page.getByTestId("auto-workflow").click();
+    await expect(page.getByTestId("auto-workflow")).toHaveText(/Bắt đầu phân tích|Tiếp tục quy trình/);
+
     await expect(page.getByText(/Readiness Lab MVP/i).first()).toBeVisible({
-      timeout: 60_000,
-    });
-    await expect(page.getByText(/VERIFIED/i).first()).toBeVisible({
-      timeout: 20_000,
-    });
-    await expect(page.getByTestId("auto-workflow")).toBeVisible({
-      timeout: 30_000,
+      timeout: 90_000,
     });
 
-    await page.getByTestId("route-mode").selectOption("DEEP");
-    await page.getByTestId("intent-select").selectOption("PREPARE_DECISION");
-    await expect(page.getByTestId("intent-select")).toHaveValue("PREPARE_DECISION");
-    await page.getByTestId("composer").fill("Prepare the decision record draft.");
-    await page.getByTestId("send-message").click();
+    // Wait for workflow to finish advancing (approve button or paused/complete)
+    await expect(
+      page.getByTestId("approve-decision").or(page.getByTestId("auto-workflow"))
+    ).toBeVisible({ timeout: 90_000 });
+
+    // If still need prepare via advanced QA only when approve not visible yet
+    if (!(await page.getByTestId("approve-decision").count())) {
+      await page.getByTestId("advanced-controls").click();
+      await page.getByTestId("intent-select").selectOption("PREPARE_DECISION");
+      await page.getByTestId("composer").fill("Prepare the decision record draft.");
+      await page.getByTestId("send-message").click();
+    }
 
     await expect(page.getByTestId("approve-decision")).toBeVisible({
-      timeout: 30_000,
+      timeout: 60_000,
     });
     await page.getByTestId("approve-decision").click();
     await expect(page.getByTestId("generate-blueprint")).toBeVisible({

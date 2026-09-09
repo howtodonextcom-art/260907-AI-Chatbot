@@ -3,9 +3,9 @@
 import type { RouteMode } from "@/domain/decision/types";
 
 const FOOTER_BY_MODE: Record<RouteMode, string> = {
-  QUICK: "QUICK: một lần gọi · không Critic/Judge",
-  STANDARD: "STANDARD: chỉ Analyst · chọn DEEP để tranh luận",
-  DEEP: "DEEP: gọi model theo intent — không chạy đủ hội đồng mỗi bước",
+  QUICK: "QUICK: một lần gọi nhẹ",
+  STANDARD: "STANDARD: quy trình đầy đủ (Analyst theo giai đoạn)",
+  DEEP: "DEEP: Gửi = 1 giai đoạn · Bắt đầu phân tích = cả pipeline. OPTIONS mới gọi DeepSeek; CRITIQUE mới gọi Groq.",
 };
 
 export function Composer(props: {
@@ -18,11 +18,13 @@ export function Composer(props: {
   onAutoRun?: () => void;
   autoRunning?: boolean;
   autoStepLabel?: string | null;
+  autoLabel?: string;
 }) {
   const modeHint = props.routeMode
     ? FOOTER_BY_MODE[props.routeMode]
     : null;
   const busy = props.running || Boolean(props.autoRunning);
+  const cta = props.autoLabel ?? "Bắt đầu phân tích";
 
   return (
     <div
@@ -54,6 +56,7 @@ export function Composer(props: {
             onClick={props.onStop}
             className="lab-btn min-h-[56px] border px-4 text-sm"
             style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
+            data-testid="stop-workflow"
           >
             Dừng
           </button>
@@ -73,9 +76,9 @@ export function Composer(props: {
                 onClick={props.onAutoRun}
                 className="lab-btn min-h-[56px] px-3 text-sm"
                 data-testid="auto-workflow"
-                title="Tự động: FRAME→Analyst, OPTIONS→Analyst, CRITIQUE→Critic, VERIFY→tools (~4–7 gọi, không 16)"
+                title="Hệ thống tự chọn và chạy các giai đoạn tiếp theo — không cần chọn Intent"
               >
-                ▶ Tự động 4 bước
+                {cta}
               </button>
             ) : null}
           </>
@@ -86,7 +89,7 @@ export function Composer(props: {
         style={{ color: "var(--text-muted)" }}
       >
         {props.autoRunning && props.autoStepLabel
-          ? `Đang tự động chạy: ${props.autoStepLabel} — bấm Dừng để huỷ.`
+          ? `Đang chạy quy trình: ${props.autoStepLabel} — bấm Dừng để huỷ.`
           : `Enter để gửi · Shift+Enter xuống dòng${modeHint ? ` · ${modeHint}` : ""}`}
       </p>
     </div>

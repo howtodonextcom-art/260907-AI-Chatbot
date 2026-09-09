@@ -7,7 +7,13 @@ import { runJudge } from "@/ai/agents/judge";
 import { runSecondOpinion } from "@/ai/agents/second-opinion";
 import { getServerEnv } from "@/config/env";
 import { buildCoreContext } from "@/ai/orchestration/context-builder";
-import { decideRouting } from "@/ai/orchestration/routing-policy";
+import { decideRouting, roleTokenCeiling } from "@/ai/orchestration/routing-policy";
+import {
+  applyWorkflowProgress,
+  decideWorkflowStage,
+  emptyWorkflowMetadata,
+  resolveIntentForRun,
+} from "@/domain/decision/workflow-stage";
 import {
   canSpend,
   createBudgetTracker,
@@ -18,11 +24,13 @@ import { runVerifyPipeline } from "@/ai/orchestration/verify-pipeline";
 import { getDomainPack } from "@/domain-packs/registry";
 import type {
   Assumption,
+  Constraint,
   DecisionSession,
   JudgeDraft,
   Option,
   RouteMode,
   Unknown,
+  WorkflowLastRunRole,
 } from "@/domain/decision/types";
 import type { Repositories } from "@/infrastructure/repositories";
 import { logStructured } from "@/infrastructure/logging/logger";
@@ -42,6 +50,10 @@ import {
   countBlockingHighUnknowns,
   isUnknownResolutionTerminal,
 } from "@/domain/decision/unknown-policy";
+import {
+  mergeDebateNotes,
+  recordLastRunRole,
+} from "@/domain/decision/debate-notes";
 
 /**
  * Transparent, documented heuristic mapping — not statistical precision.
@@ -97,7 +109,13 @@ export type SseEventName =
   | "decision.state.updated"
   | "run.partial"
   | "run.completed"
-  | "run.failed";
+  | "run.failed"
+  | "workflow.started"
+  | "workflow.stage.started"
+  | "workflow.stage.completed"
+  | "workflow.paused"
+  | "workflow.resumed"
+  | "workflow.completed";
 
 export interface SseEvent {
   event: SseEventName;
@@ -109,7 +127,8 @@ export async function* runDecisionOrchestrator(args: {
   session: DecisionSession;
   ownerId: string;
   routeMode: RouteMode;
-  intent:
+  /** Optional — StageController resolves when omitted (v17 automatic workflow). */
+  intent?:
     | "DISCUSS"
     | "FRAME_PROBLEM"
     | "GENERATE_OPTIONS"
@@ -136,6 +155,36 @@ export async function* runDecisionOrchestrator(args: {
     }
   };
 
+  const resolved = resolveIntentForRun({
+    session: args.session,
+    routeMode: args.routeMode,
+    explicitIntent: args.intent,
+    lastHumanMessage: args.userRequest,
+  });
+  const intent = resolved.intent;
+  const workflowStage = resolved.stage;
+  let workflowDecision = resolved.decision;
+
+  if (workflowDecision.invalidatedFromStage) {
+    const now = new Date().toISOString();
+    const baseWf =
+      args.session.workflow ?? emptyWorkflowMetadata(args.routeMode);
+    args.session = {
+      ...args.session,
+      workflow: applyWorkflowProgress({
+        workflow: {
+          ...baseWf,
+          routeMode: args.routeMode,
+          state: "RUNNING",
+          invalidatedFromStage: workflowDecision.invalidatedFromStage,
+        },
+        completedStage: baseWf.currentStage,
+        decision: workflowDecision,
+        now,
+      }),
+    };
+  }
+
   const messages = await args.repos.messages.listBySession(
     args.session.workspaceId,
     args.session.id,
@@ -147,19 +196,53 @@ export async function* runDecisionOrchestrator(args: {
     args.ownerId
   );
 
+  const highUnknownCount = countBlockingHighUnknowns(args.session.unknowns);
+  const frameNeedsChallenge =
+    highUnknownCount >= 2 ||
+    (args.session.problem.trim().length < 80 &&
+      args.session.constraints.length === 0);
+  const soArtifact = args.session.workflow?.artifacts.OPTIONS;
+  const secondOpinionAlreadyContributed =
+    soArtifact?.status === "CURRENT" &&
+    (soArtifact.agentRunIds?.length ?? 0) > 0;
+
   const routing = decideRouting({
     routeMode: args.routeMode,
-    intent: args.intent,
+    intent,
     evidenceCoverage: evidence.length > 0 ? Math.min(1, evidence.length / 5) : 0.2,
     importance:
-      args.intent === "PREPARE_DECISION"
+      intent === "PREPARE_DECISION"
         ? "HIGH"
-        : args.intent === "CRITIQUE"
+        : intent === "CRITIQUE"
           ? "HIGH"
           : "MEDIUM",
-    blockingUnknownCount: countBlockingHighUnknowns(args.session.unknowns),
+    blockingUnknownCount: highUnknownCount,
     hasDeepseek: getServerEnv().hasDeepseek,
+    frameNeedsChallenge,
+    secondOpinionAlreadyContributed,
+    materialFactsChanged: Boolean(workflowDecision.invalidatedFromStage),
   });
+
+  const priorState = args.session.workflow?.state;
+  yield {
+    event: priorState === "PAUSED" ? "workflow.resumed" : "workflow.started",
+    data: {
+      correlationId,
+      sessionId: args.session.id,
+      stage: workflowStage,
+      state: "RUNNING",
+      decision: workflowDecision,
+    },
+  };
+  yield {
+    event: "workflow.stage.started",
+    data: {
+      correlationId,
+      stage: workflowStage,
+      intent,
+      executionPlan: routing.plan,
+    },
+  };
 
   yield {
     event: "run.started",
@@ -167,6 +250,8 @@ export async function* runDecisionOrchestrator(args: {
       correlationId,
       sessionId: args.session.id,
       routeMode: args.routeMode,
+      intent,
+      workflowStage,
       routing,
       executionPlan: routing.plan,
     },
@@ -183,7 +268,7 @@ export async function* runDecisionOrchestrator(args: {
 
   const domainChecks = await domainPack.runDeterministicChecks({
     problem: args.session.problem,
-    intent: args.intent,
+    intent,
     userRequest: args.userRequest,
   });
   const failedDomain = domainChecks.filter((c) => !c.passed);
@@ -225,23 +310,74 @@ export async function* runDecisionOrchestrator(args: {
       disagreementScore: undefined,
       newInformationScore: undefined,
     });
-    if (Object.keys(verifyPatch).length > 0) {
-      const updated = await args.repos.sessions.update(
-        args.session.workspaceId,
-        args.session.id,
-        args.ownerId,
-        verifyPatch
-      );
-      yield {
-        event: "decision.state.updated",
-        data: {
-          sessionId: updated.id,
-          patch: {
-            status: updated.status,
-            assumptions: updated.assumptions,
-            unknowns: updated.unknowns,
+    const mergedAfterVerify: DecisionSession = {
+      ...args.session,
+      ...verifyPatch,
+      assumptions: verifyPatch.assumptions ?? args.session.assumptions,
+      unknowns: verifyPatch.unknowns ?? args.session.unknowns,
+    };
+    const postVerify = decideWorkflowStage({
+      session: {
+        ...mergedAfterVerify,
+        workflow: applyWorkflowProgress({
+          workflow: {
+            ...(args.session.workflow ?? emptyWorkflowMetadata(args.routeMode)),
+            routeMode: args.routeMode,
           },
+          completedStage: "VERIFY",
+        }),
+      },
+      routeMode: args.routeMode,
+    });
+    const verifyWorkflow = applyWorkflowProgress({
+      workflow: {
+        ...(args.session.workflow ?? emptyWorkflowMetadata(args.routeMode)),
+        routeMode: args.routeMode,
+        state: postVerify.state,
+        blockers: postVerify.blockers,
+      },
+      completedStage: "VERIFY",
+      usage: {
+        calls: tracker.calls,
+        inputTokens: tracker.inputTokens,
+        outputTokens: tracker.outputTokens,
+        costUsd: 0,
+      },
+      decision: postVerify,
+    });
+    const updated = await args.repos.sessions.update(
+      args.session.workspaceId,
+      args.session.id,
+      args.ownerId,
+      { ...verifyPatch, workflow: verifyWorkflow }
+    );
+    yield {
+      event: "decision.state.updated",
+      data: {
+        sessionId: updated.id,
+        patch: {
+          status: updated.status,
+          assumptions: updated.assumptions,
+          unknowns: updated.unknowns,
+          workflow: updated.workflow,
         },
+      },
+    };
+    yield {
+      event: "workflow.stage.completed",
+      data: {
+        correlationId,
+        stage: "VERIFY",
+        nextStage: postVerify.nextStage,
+        shouldAdvance: postVerify.shouldAdvance,
+        state: postVerify.state,
+        blockers: postVerify.blockers,
+      },
+    };
+    if (postVerify.state === "PAUSED") {
+      yield {
+        event: "workflow.paused",
+        data: { correlationId, blockers: postVerify.blockers },
       };
     }
     yield {
@@ -252,6 +388,10 @@ export async function* runDecisionOrchestrator(args: {
         stopReason: verified.stopReason ?? stop.reason,
         calls: tracker.calls,
         executionPlan: routing.plan,
+        workflow: verifyWorkflow,
+        shouldAdvance: postVerify.shouldAdvance,
+        nextStage: postVerify.nextStage,
+        workflowState: postVerify.state,
       },
     };
     return;
@@ -263,6 +403,8 @@ export async function* runDecisionOrchestrator(args: {
   let partial = false;
   let sessionPatch: Partial<DecisionSession> = {};
   let totalCost = 0;
+  let debateNotes = args.session.workflow?.debateNotes;
+  let lastRunRoles: WorkflowLastRunRole[] = [];
 
   const spend = canSpend(tracker, budget);
   if (!spend.ok) {
@@ -289,7 +431,7 @@ export async function* runDecisionOrchestrator(args: {
             // DeepSeek tends to be verbose; give real headroom so its JSON
             // response completes instead of truncating mid-object (which
             // silently loses agreementScore — see CLAUDE.md tech debt log).
-            maxOutputTokens: Math.min(2000, budget.maxOutputTokens),
+            maxOutputTokens: roleTokenCeiling("SECOND_OPINION", args.routeMode),
             metadata: {
               requestId: args.requestId,
               workspaceId: args.session.workspaceId,
@@ -330,7 +472,7 @@ export async function* runDecisionOrchestrator(args: {
         systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("ANALYST")}`,
         messages: [{ role: "user", content: userContent }],
         signal: args.signal,
-        maxOutputTokens: budget.maxOutputTokens,
+        maxOutputTokens: roleTokenCeiling("ANALYST", args.routeMode),
         metadata: {
           requestId: args.requestId,
           workspaceId: args.session.workspaceId,
@@ -368,7 +510,7 @@ export async function* runDecisionOrchestrator(args: {
     );
 
     if (analyst.structured) {
-      sessionPatch = applyAnalystState(args.session, analyst.structured, args.intent);
+      sessionPatch = applyAnalystState(args.session, analyst.structured, intent);
       const experimentUnknowns = (
         sessionPatch.unknowns ?? args.session.unknowns
       ).filter((u) => u.resolution === "EXPERIMENT_REQUIRED");
@@ -414,6 +556,11 @@ export async function* runDecisionOrchestrator(args: {
         model: analyst.model,
       },
     };
+    lastRunRoles = recordLastRunRole(lastRunRoles, {
+      role: "ANALYST",
+      status: "COMPLETED",
+      provider: analyst.provider,
+    });
   } catch (error) {
     const cancelled = isCancelledError(error) || Boolean(args.signal?.aborted);
     await args.repos.agentRuns.update(
@@ -441,8 +588,26 @@ export async function* runDecisionOrchestrator(args: {
     return;
   }
   } else {
+    // Prefer canonical stage artifacts over lossy latestSummary.
+    const frameSummary = args.session.workflow?.artifacts.FRAME?.summary;
+    const optionsSummary = args.session.workflow?.artifacts.OPTIONS?.summary;
+    const artifactText = [frameSummary, optionsSummary]
+      .filter(Boolean)
+      .join("\n\n");
+    const optionsBlock =
+      args.session.options.length > 0
+        ? `Canonical options:\n${args.session.options
+            .map(
+              (o) =>
+                `- [${o.proposedBy ?? "UNKNOWN"}] ${o.title}: ${o.description}`
+            )
+            .join("\n")}`
+        : "";
     analystContent =
-      args.session.latestSummary ?? args.userRequest;
+      artifactText ||
+      optionsBlock ||
+      args.session.latestSummary ||
+      args.userRequest;
   }
 
   const afterAnalystFlags = sessionStopFlags({
@@ -465,6 +630,11 @@ export async function* runDecisionOrchestrator(args: {
       afterAnalystStop.reason === "MAX_ROUNDS_REACHED");
   if (secondOpinionPromise && skipRemainder) {
     void secondOpinionPromise.catch(() => undefined);
+    lastRunRoles = recordLastRunRole(lastRunRoles, {
+      role: "SECOND_OPINION",
+      status: "SKIPPED",
+      message: afterAnalystStop.reason ?? "Skipped after Analyst stop",
+    });
   }
 
   // --- Second Opinion (optional, DEEP + DeepSeek configured only) ---
@@ -547,6 +717,56 @@ export async function* runDecisionOrchestrator(args: {
           provider: secondOpinion.provider,
         },
       };
+      lastRunRoles = recordLastRunRole(lastRunRoles, {
+        role: "SECOND_OPINION",
+        status: "COMPLETED",
+        provider: secondOpinion.provider,
+      });
+      debateNotes = mergeDebateNotes(debateNotes, {
+        divergentRisks: secondOpinion.structured?.divergentRisks ?? [],
+        soRecommendedDirection: secondOpinion.structured?.recommendedDirection,
+        soPreferredOptionTitle: secondOpinion.structured?.preferredOptionTitle,
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Merge independent options into canonical DecisionState (dedupe by title).
+      if (
+        secondOpinion.structured?.independentOptions?.length ||
+        secondOpinion.structured?.preferredOptionTitle
+      ) {
+        const baseOptions =
+          sessionPatch.options ?? args.session.options ?? [];
+        const soOptions = (
+          secondOpinion.structured.independentOptions?.length
+            ? secondOpinion.structured.independentOptions
+            : secondOpinion.structured.preferredOptionTitle
+              ? [
+                  {
+                    title: secondOpinion.structured.preferredOptionTitle,
+                    description:
+                      secondOpinion.structured.recommendedDirection ?? "",
+                    pros: [] as string[],
+                    cons: [] as string[],
+                    risks: secondOpinion.structured.divergentRisks ?? [],
+                  },
+                ]
+              : []
+        ).map((o) => ({
+          id: uuidv4(),
+          title: o.title,
+          description: o.description,
+          pros: o.pros,
+          cons: o.cons,
+          risks: o.risks,
+          evidenceIds: [] as string[],
+          status: "PROPOSED" as const,
+          proposedBy: "SECOND_OPINION" as const,
+        }));
+        sessionPatch = {
+          ...sessionPatch,
+          options: mergeOptionsPreserveIds(baseOptions, soOptions),
+        };
+      }
     } catch (error) {
       await args.repos.agentRuns.update(
         args.session.workspaceId,
@@ -569,6 +789,12 @@ export async function* runDecisionOrchestrator(args: {
           retryable: true,
         },
       };
+      lastRunRoles = recordLastRunRole(lastRunRoles, {
+        role: "SECOND_OPINION",
+        status: "FAILED",
+        provider: "deepseek",
+        message: "DeepSeek second opinion failed; Analyst output preserved",
+      });
     }
   }
 
@@ -611,7 +837,7 @@ export async function* runDecisionOrchestrator(args: {
             systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("CRITIC")}`,
             messages: [{ role: "user", content: userContent }],
             signal: args.signal,
-            maxOutputTokens: Math.min(1500, budget.maxOutputTokens),
+            maxOutputTokens: roleTokenCeiling("CRITIC", args.routeMode),
             metadata: {
               requestId: args.requestId,
               workspaceId: args.session.workspaceId,
@@ -674,6 +900,17 @@ export async function* runDecisionOrchestrator(args: {
             provider: critic.provider,
           },
         };
+        lastRunRoles = recordLastRunRole(lastRunRoles, {
+          role: "CRITIC",
+          status: "COMPLETED",
+          provider: critic.provider,
+        });
+        debateNotes = mergeDebateNotes(debateNotes, {
+          criticisms: critic.structured?.criticisms ?? [],
+          unsupportedAssumptions: critic.structured?.unsupportedAssumptions ?? [],
+          missingEvidence: critic.structured?.missingEvidence ?? [],
+          updatedAt: new Date().toISOString(),
+        });
       } catch (error) {
         partial = true;
         await args.repos.agentRuns.update(
@@ -697,6 +934,12 @@ export async function* runDecisionOrchestrator(args: {
             retryable: true,
           },
         };
+        lastRunRoles = recordLastRunRole(lastRunRoles, {
+          role: "CRITIC",
+          status: "FAILED",
+          provider: "groq",
+          message: "Critic failed; Analyst output preserved",
+        });
       }
     }
   }
@@ -706,7 +949,7 @@ export async function* runDecisionOrchestrator(args: {
   if (
     routing.runJudge &&
     !skipRemainder &&
-    (!partial || args.intent === "PREPARE_DECISION")
+    (!partial || intent === "PREPARE_DECISION")
   ) {
     throwIfAborted();
     const judgeSpend = canSpend(tracker, budget);
@@ -746,7 +989,7 @@ export async function* runDecisionOrchestrator(args: {
             systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("JUDGE")}`,
             messages: [{ role: "user", content: userContent }],
             signal: args.signal,
-            maxOutputTokens: budget.maxOutputTokens,
+            maxOutputTokens: roleTokenCeiling("JUDGE", args.routeMode),
             metadata: {
               requestId: args.requestId,
               workspaceId: args.session.workspaceId,
@@ -892,6 +1135,11 @@ export async function* runDecisionOrchestrator(args: {
           event: "agent.completed",
           data: { runId: judgeRun.id, role: "JUDGE", provider: judge.provider },
         };
+        lastRunRoles = recordLastRunRole(lastRunRoles, {
+          role: "JUDGE",
+          status: "COMPLETED",
+          provider: judge.provider,
+        });
       } catch (error) {
         partial = true;
         await args.repos.agentRuns.update(
@@ -914,11 +1162,86 @@ export async function* runDecisionOrchestrator(args: {
             message: "Judge failed; no DecisionRecord created",
           },
         };
+        lastRunRoles = recordLastRunRole(lastRunRoles, {
+          role: "JUDGE",
+          status: "FAILED",
+          message: "Judge failed; no DecisionRecord created",
+        });
       }
     }
   }
 
   tracker.rounds += 1;
+
+  // Persist workflow metadata + stage artifacts (refresh durability).
+  const mergedSession: DecisionSession = {
+    ...args.session,
+    ...sessionPatch,
+    assumptions: sessionPatch.assumptions ?? args.session.assumptions,
+    unknowns: sessionPatch.unknowns ?? args.session.unknowns,
+    options: sessionPatch.options ?? args.session.options,
+    constraints: sessionPatch.constraints ?? args.session.constraints,
+    judgeDraft: sessionPatch.judgeDraft ?? args.session.judgeDraft,
+    latestSummary: sessionPatch.latestSummary ?? args.session.latestSummary,
+    status: sessionPatch.status ?? args.session.status,
+  };
+  const postDecision = decideWorkflowStage({
+    session: {
+      ...mergedSession,
+      workflow: applyWorkflowProgress({
+        workflow: {
+          ...(args.session.workflow ?? emptyWorkflowMetadata(args.routeMode)),
+          routeMode: args.routeMode,
+        },
+        completedStage: workflowStage,
+        agentRunIds: [],
+        usage: {
+          calls: tracker.calls,
+          inputTokens: tracker.inputTokens,
+          outputTokens: tracker.outputTokens,
+          costUsd: totalCost,
+        },
+      }),
+    },
+    routeMode: args.routeMode,
+  });
+  const stageSummary =
+    analystContent ||
+    secondOpinionContent ||
+    criticContent ||
+    mergedSession.latestSummary;
+  const nextWorkflow = applyWorkflowProgress({
+    workflow: {
+      ...(args.session.workflow ?? emptyWorkflowMetadata(args.routeMode)),
+      routeMode: args.routeMode,
+      state: postDecision.state,
+      blockers: postDecision.blockers,
+    },
+    completedStage: workflowStage,
+    agentRunIds: [],
+    usage: {
+      calls: tracker.calls,
+      inputTokens: tracker.inputTokens,
+      outputTokens: tracker.outputTokens,
+      costUsd: totalCost,
+    },
+    decision: postDecision,
+  });
+  if (stageSummary && nextWorkflow.artifacts[workflowStage]) {
+    nextWorkflow.artifacts[workflowStage] = {
+      ...nextWorkflow.artifacts[workflowStage]!,
+      summary: stageSummary.slice(0, 8000),
+    };
+  }
+  nextWorkflow.debateNotes = debateNotes;
+  nextWorkflow.lastRun = {
+    stage: workflowStage,
+    plannedStages: routing.plan.stages,
+    roles: lastRunRoles,
+    at: new Date().toISOString(),
+  };
+  sessionPatch = { ...sessionPatch, workflow: nextWorkflow };
+  workflowDecision = postDecision;
 
   if (Object.keys(sessionPatch).length > 0) {
     const updated = await args.repos.sessions.update(
@@ -936,8 +1259,40 @@ export async function* runDecisionOrchestrator(args: {
           assumptions: updated.assumptions,
           unknowns: updated.unknowns,
           options: updated.options,
+          constraints: updated.constraints,
           judgeDraft: updated.judgeDraft,
+          workflow: updated.workflow,
         },
+      },
+    };
+  }
+
+  yield {
+    event: "workflow.stage.completed",
+    data: {
+      correlationId,
+      stage: workflowStage,
+      nextStage: postDecision.nextStage,
+      shouldAdvance: postDecision.shouldAdvance,
+      state: postDecision.state,
+      blockers: postDecision.blockers,
+    },
+  };
+  if (postDecision.state === "PAUSED" || postDecision.state === "BLOCKED") {
+    yield {
+      event: "workflow.paused",
+      data: {
+        correlationId,
+        blockers: postDecision.blockers,
+        rationale: postDecision.rationale,
+      },
+    };
+  } else if (postDecision.state === "COMPLETED") {
+    yield {
+      event: "workflow.completed",
+      data: {
+        correlationId,
+        blockers: postDecision.blockers,
       },
     };
   }
@@ -949,6 +1304,7 @@ export async function* runDecisionOrchestrator(args: {
     costUsd: totalCost,
     partial,
     calls: tracker.calls,
+    workflowStage,
   });
 
   yield {
@@ -963,6 +1319,10 @@ export async function* runDecisionOrchestrator(args: {
       plannedCost: routing.plan.estimatedMaxCostUsd,
       stopReason: skipRemainder ? afterAnalystStop.reason : null,
       executionPlan: routing.plan,
+      workflow: nextWorkflow,
+      shouldAdvance: postDecision.shouldAdvance,
+      nextStage: postDecision.nextStage,
+      workflowState: postDecision.state,
     },
   };
 }
@@ -996,6 +1356,7 @@ export function applyAnalystState(
       cons: string[];
       risks: string[];
     }>;
+    constraints?: Array<{ statement: string }>;
     suggestedStatus?: "DISCOVERY" | "VALIDATING" | "DECISION_READY";
     problemFraming?: string;
   },
@@ -1034,6 +1395,17 @@ export function applyAnalystState(
       risks: o.risks,
       evidenceIds: [] as string[],
       status: "PROPOSED" as const,
+      proposedBy: "ANALYST" as const,
+    })),
+  ];
+
+  const constraints: Constraint[] = [
+    ...session.constraints,
+    ...(structured.constraints ?? []).map((c) => ({
+      id: uuidv4(),
+      statement: c.statement,
+      source: "AI" as const,
+      confirmedByUser: false,
     })),
   ];
 
@@ -1081,10 +1453,29 @@ export function applyAnalystState(
   return {
     assumptions: dedupeByKey(assumptions, (a) => a.statement),
     unknowns: dedupeByKey(unknowns, (u) => u.question),
-    options: dedupeByKey(options, (o) => o.title),
+    options: mergeOptionsPreserveIds([], options),
+    constraints: dedupeByKey(constraints, (c) => c.statement),
     status,
     latestSummary: structured.problemFraming ?? session.latestSummary,
   };
+}
+
+/** Keep first-seen option ID when titles collide; merge provenance. */
+export function mergeOptionsPreserveIds(
+  existing: Option[],
+  incoming: Option[]
+): Option[] {
+  const byTitle = new Map<string, Option>();
+  for (const o of existing) {
+    byTitle.set(o.title.toLowerCase().trim(), o);
+  }
+  for (const o of incoming) {
+    const key = o.title.toLowerCase().trim();
+    if (!byTitle.has(key)) {
+      byTitle.set(key, o);
+    }
+  }
+  return Array.from(byTitle.values());
 }
 
 function dedupeByKey<T>(items: T[], key: (item: T) => string): T[] {

@@ -166,3 +166,38 @@ export function sessionStopFlags(args: {
             .length / Math.max(1, args.assumptions.length || 1),
   };
 }
+
+/**
+ * Transparent disagreement heuristic (0–1): higher = more disagreement.
+ * Critic empty criticisms + no missingEvidence → low disagreement.
+ * Never invent a score when Critic did not run (caller must omit).
+ */
+export function computeDisagreementScore(args: {
+  criticismCount: number;
+  missingEvidenceCount: number;
+  contradictionCount: number;
+}): number {
+  const raw =
+    args.criticismCount * 0.25 +
+    args.missingEvidenceCount * 0.2 +
+    args.contradictionCount * 0.3;
+  return Math.min(1, raw);
+}
+
+/**
+ * Transparent new-information heuristic (0–1) from contribution counts.
+ * Zero new options/assumptions/risks → near zero.
+ */
+export function computeNewInformationScore(args: {
+  newOptions: number;
+  newAssumptions: number;
+  newRisks: number;
+  newUnknowns: number;
+}): number {
+  const raw =
+    args.newOptions * 0.35 +
+    args.newAssumptions * 0.25 +
+    args.newRisks * 0.2 +
+    args.newUnknowns * 0.2;
+  return Math.min(1, raw);
+}

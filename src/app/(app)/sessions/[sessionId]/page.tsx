@@ -47,6 +47,9 @@ export default function SessionPage() {
   const [costUsd, setCostUsd] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [partial, setPartial] = useState(false);
+  const [livePartials, setLivePartials] = useState<
+    Array<{ role?: string; message?: string }>
+  >([]);
   const [running, setRunning] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
@@ -59,6 +62,9 @@ export default function SessionPage() {
       `/api/sessions/${sessionId}`
     );
     setSession(s.session);
+    if (s.session.workflow?.routeMode) {
+      setRouteMode(s.session.workflow.routeMode);
+    }
     const [msgs, ev, rs, dec, bp, list, ex] = await Promise.all([
       apiFetch<{ messages: Message[] }>(`/api/sessions/${sessionId}/messages`),
       apiFetch<{ evidence: EvidenceItem[] }>(
@@ -101,14 +107,27 @@ export default function SessionPage() {
 
   async function sendMessage(
     content: string,
-    overrides?: { routeMode?: RouteMode; intent?: Intent }
-  ): Promise<{ status: DecisionSession["status"]; failed: boolean }> {
+    overrides?: {
+      routeMode?: RouteMode;
+      intent?: Intent;
+      /** Omit intent so StageController picks the next stage (v17). */
+      autoIntent?: boolean;
+    }
+  ): Promise<{
+    status: DecisionSession["status"];
+    failed: boolean;
+    shouldAdvance?: boolean;
+    workflowState?: string;
+  }> {
     setError(null);
     setPartial(false);
+    setLivePartials([]);
     setStreamingText("");
     setStreamingRole(null);
     setRunning(true);
     let failed = false;
+    let shouldAdvance: boolean | undefined;
+    let workflowState: string | undefined;
     try {
       const created = await apiFetch<{ message: Message }>(
         `/api/sessions/${sessionId}/messages`,
@@ -118,17 +137,23 @@ export default function SessionPage() {
 
       const token = getAuthToken();
       abortRef.current = new AbortController();
+      const runBody: Record<string, unknown> = {
+        routeMode: overrides?.routeMode ?? routeMode,
+        messageId: created.message.id,
+      };
+      const mode = overrides?.routeMode ?? routeMode;
+      if (overrides?.intent) {
+        runBody.intent = overrides.intent;
+      } else if (!overrides?.autoIntent && mode !== "DEEP") {
+        runBody.intent = intent;
+      }
       const res = await fetch(`/api/sessions/${sessionId}/run`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token ?? ""}`,
         },
-        body: JSON.stringify({
-          routeMode: overrides?.routeMode ?? routeMode,
-          intent: overrides?.intent ?? intent,
-          messageId: created.message.id,
-        }),
+        body: JSON.stringify(runBody),
         signal: abortRef.current.signal,
       });
 
@@ -229,13 +254,28 @@ export default function SessionPage() {
                 : prev
             );
           }
+          if (event === "workflow.stage.started") {
+            setAutoStepLabel(String(data.stage ?? ""));
+          }
           if (event === "run.partial") {
             setPartial(true);
+            const role = typeof data.role === "string" ? data.role : undefined;
+            const message =
+              typeof data.message === "string" ? data.message : undefined;
+            if (role || message) {
+              setLivePartials((prev) => [...prev, { role, message }]);
+            }
           }
           if (event === "run.completed" || event === "run.partial") {
             commitStreamBubble(currentRole, localStream);
             localStream = "";
             if (typeof data.costUsd === "number") setCostUsd(data.costUsd);
+            if (typeof data.shouldAdvance === "boolean") {
+              shouldAdvance = data.shouldAdvance;
+            }
+            if (typeof data.workflowState === "string") {
+              workflowState = data.workflowState;
+            }
             setAgentStatus(null);
             setStreamingRole(null);
             setStreamingText("");
@@ -252,7 +292,12 @@ export default function SessionPage() {
       const refreshed = await loadAll();
       setStreamingText("");
       setStreamingRole(null);
-      return { status: refreshed?.status ?? "DISCOVERY", failed };
+      return {
+        status: refreshed?.status ?? "DISCOVERY",
+        failed,
+        shouldAdvance,
+        workflowState,
+      };
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         setError(e instanceof Error ? e.message : "Gửi thất bại");
@@ -271,59 +316,41 @@ export default function SessionPage() {
     setStreamingRole(null);
   }
 
-  const AUTO_STEPS: Array<{
-    intent: Intent;
-    label: string;
-    followup?: string;
-  }> = [
-    { intent: "FRAME_PROBLEM", label: "Định khung" },
-    {
-      intent: "GENERATE_OPTIONS",
-      label: "Sinh phương án",
-      followup:
-        "Hãy đề xuất các phương án khả thi dựa trên khung vấn đề vừa xác định.",
-    },
-    {
-      intent: "CRITIQUE",
-      label: "Phản biện",
-      followup:
-        "Hãy phản biện các phương án đã đề xuất, chỉ ra rủi ro và giả định chưa được kiểm chứng.",
-    },
-    {
-      intent: "VERIFY",
-      label: "Xác minh",
-      followup: "Hãy xác minh các giả định hoặc claim quan trọng nếu có thể.",
-    },
-  ];
-
   /**
-   * Runs FRAME_PROBLEM → GENERATE_OPTIONS → CRITIQUE → VERIFY back-to-back in
-   * DEEP mode, stopping as soon as the session reaches DECISION_READY (or
-   * DECIDED) so a human still explicitly approves — this never auto-decides.
-   * Always DEEP: CRITIQUE/PREPARE_DECISION-adjacent intents only invoke
-   * Critic/Judge in DEEP mode (see routing-policy.ts), so QUICK/STANDARD
-   * would silently skip the parts of this sequence that matter.
+   * Server-owned automatic workflow (v17): omit Intent each step; StageController
+   * chooses FRAME→OPTIONS→CRITIQUE→VERIFY→PREPARE. Never auto-approves DECIDED.
+   * Mode stays as the user selected (not forced to DEEP).
    */
   async function runAutoWorkflow(seedContent: string) {
     if (!seedContent.trim() || running || autoRunning) return;
     stoppedRef.current = false;
     setAutoRunning(true);
-    setRouteMode("DEEP");
     try {
-      for (let i = 0; i < AUTO_STEPS.length; i += 1) {
+      let first = true;
+      // Safety cap — content-driven advance, not hard-coded step list.
+      for (let i = 0; i < 8; i += 1) {
         if (stoppedRef.current) break;
-        const step = AUTO_STEPS[i];
-        setIntent(step.intent);
-        setAutoStepLabel(`${step.label} (${i + 1}/${AUTO_STEPS.length})`);
-        const content = i === 0 ? seedContent : (step.followup ?? seedContent);
+        setAutoStepLabel(first ? "Bắt đầu" : "Tiếp tục");
+        const content = first
+          ? seedContent
+          : "Tiếp tục quy trình quyết định theo giai đoạn tiếp theo.";
         const result = await sendMessage(content, {
-          routeMode: "DEEP",
-          intent: step.intent,
+          routeMode,
+          autoIntent: true,
         });
+        first = false;
         if (stoppedRef.current || result.failed) break;
         if (result.status === "DECISION_READY" || result.status === "DECIDED") {
           break;
         }
+        if (
+          result.workflowState === "PAUSED" ||
+          result.workflowState === "BLOCKED" ||
+          result.workflowState === "COMPLETED"
+        ) {
+          break;
+        }
+        if (!result.shouldAdvance) break;
       }
     } finally {
       setAutoRunning(false);
@@ -451,6 +478,18 @@ export default function SessionPage() {
         costUsd={totalCost}
         agentStatus={agentStatus}
         onToggleCanvas={() => setCanvasOpen((v) => !v)}
+        onRequestCritique={() => {
+          setIntent("CRITIQUE");
+          void sendMessage("Hãy phản biện thêm các phương án hiện có.", {
+            intent: "CRITIQUE",
+          });
+        }}
+        onRequestVerify={() => {
+          setIntent("VERIFY");
+          void sendMessage("Hãy xác minh lại các giả định quan trọng.", {
+            intent: "VERIFY",
+          });
+        }}
       />
 
       {error ? <ErrorBanner message={error} onRetry={() => setError(null)} /> : null}
@@ -459,7 +498,11 @@ export default function SessionPage() {
           className="px-4 py-2 text-sm"
           style={{ background: "#3a3218", color: "var(--warn)" }}
         >
-          Chạy một phần — kết quả Analyst được giữ. Bạn có thể thử lại Critic/Judge.
+          Chạy một phần — kết quả Analyst được giữ.
+          {livePartials
+            .filter((p) => p.message)
+            .map((p) => ` ${p.role ?? ""}: ${p.message}`)
+            .join(" ")}
         </div>
       ) : null}
 
@@ -513,6 +556,15 @@ export default function SessionPage() {
           onAutoRun={runAutoWorkflow}
           autoRunning={autoRunning}
           autoStepLabel={autoStepLabel}
+          autoLabel={
+            session.workflow?.state === "PAUSED"
+              ? "Tiếp tục quy trình"
+              : "Bắt đầu phân tích"
+          }
+          workflow={session.workflow}
+          lastRun={session.workflow?.lastRun}
+          plannedStages={executionPlan?.stages}
+          livePartials={livePartials}
         />
 
         <div

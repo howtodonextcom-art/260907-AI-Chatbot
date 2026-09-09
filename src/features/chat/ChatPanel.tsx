@@ -2,10 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "@/domain/evidence/types";
-import type { RouteMode } from "@/domain/decision/types";
+import type {
+  RouteMode,
+  WorkflowLastRun,
+  WorkflowMetadata,
+} from "@/domain/decision/types";
 import { MessageBubble } from "@/features/chat/MessageBubble";
 import { Composer } from "@/features/chat/Composer";
 import { DebateTimeline } from "@/features/chat/DebateTimeline";
+import { RunStageChips } from "@/features/chat/RunStageChips";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 const STREAM_COLOR: Record<string, string> = {
@@ -26,6 +31,11 @@ export function ChatPanel(props: {
   onAutoRun?: (content: string) => Promise<void>;
   autoRunning?: boolean;
   autoStepLabel?: string | null;
+  autoLabel?: string;
+  workflow?: WorkflowMetadata;
+  lastRun?: WorkflowLastRun;
+  plannedStages?: string[];
+  livePartials?: Array<{ role?: string; message?: string }>;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState("");
@@ -55,10 +65,10 @@ export function ChatPanel(props: {
 
   const emptyDescription =
     props.routeMode === "DEEP"
-      ? "Mode DEEP gọi theo intent: FRAME/OPTIONS = Analyst, CRITIQUE = Critic, VERIFY = tools, PREPARE_DECISION = Judge. Không chạy đủ hội đồng mỗi bước."
+      ? "Mode DEEP — đa góc nhìn: hệ thống tự tiến FRAME→OPTIONS→CRITIQUE→VERIFY→PREPARE. Bạn sở hữu quyết định cuối."
       : props.routeMode === "QUICK"
-        ? "Mode QUICK chỉ 1 lần gọi nhanh — không tranh luận. Chọn DEEP nếu muốn Critic/Judge."
-        : "Mode STANDARD chỉ chạy Analyst. «Thảo luận» không phải tranh luận đa vai — chọn Mode DEEP để thấy Critic/Judge.";
+        ? "Mode QUICK chỉ 1 lần gọi nhẹ. Chọn STANDARD/DEEP để chạy quy trình quyết định đầy đủ."
+        : "Mode STANDARD chạy quy trình đầy đủ với Analyst theo giai đoạn. Chọn DEEP để có Critic/SecondOpinion/Judge.";
 
   return (
     <section className="flex min-h-0 flex-col" aria-label="Chat quyết định">
@@ -71,6 +81,23 @@ export function ChatPanel(props: {
         ) : null}
 
         <div className="mx-auto grid max-w-3xl gap-3">
+          {props.routeMode === "DEEP" ? (
+            <div
+              className="rounded-lg border px-3 py-2 text-xs leading-relaxed"
+              style={{
+                borderColor: "var(--border)",
+                color: "var(--text-muted)",
+                background: "var(--bg-elevated)",
+              }}
+              data-testid="deep-stage-hint"
+            >
+              {props.workflow?.currentStage === "OPTIONS" ||
+              props.workflow?.completedStages?.includes("OPTIONS")
+                ? "DEEP: Critic (Groq) chạy ở CRITIQUE; Judge (Gemini) ở PREPARE. Gửi = một giai đoạn; Bắt đầu phân tích = cả pipeline."
+                : "Bước DISCUSS/FRAME chỉ Analyst (Gemini). Critic/Groq và SecondOpinion/DeepSeek chạy ở OPTIONS và CRITIQUE — dùng Bắt đầu phân tích để đi hết quy trình."}
+            </div>
+          ) : null}
+
           {(props.messages.length > 0 || props.running) && (
             <DebateTimeline
               messages={props.messages}
@@ -78,6 +105,12 @@ export function ChatPanel(props: {
               routeMode={props.routeMode}
             />
           )}
+
+          <RunStageChips
+            lastRun={props.lastRun ?? props.workflow?.lastRun}
+            plannedStages={props.plannedStages}
+            livePartials={props.livePartials}
+          />
 
           {props.messages.map((m) => (
             <MessageBubble key={m.id} message={m} />
@@ -120,6 +153,7 @@ export function ChatPanel(props: {
         onAutoRun={props.onAutoRun ? handleAutoRun : undefined}
         autoRunning={props.autoRunning}
         autoStepLabel={props.autoStepLabel}
+        autoLabel={props.autoLabel}
       />
     </section>
   );

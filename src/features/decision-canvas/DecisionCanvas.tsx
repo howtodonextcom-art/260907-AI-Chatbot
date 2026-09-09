@@ -5,6 +5,7 @@ import type { EvidenceItem } from "@/domain/evidence/types";
 import type { Blueprint } from "@/domain/blueprint/types";
 import { LabMark } from "@/components/ui/LabMark";
 import { UnknownsPanel } from "@/features/decision-canvas/UnknownsPanel";
+import { DebateNotesPanel } from "@/features/decision-canvas/DebateNotesPanel";
 import type { ResolveUnknownPayload } from "@/features/decision-canvas/types";
 import { computeReadiness } from "@/domain/decision/unknown-policy";
 
@@ -158,12 +159,14 @@ export function DecisionCanvas(props: {
         onResolve={props.onResolveUnknown}
       />
 
+      <DebateNotesPanel session={session} />
+
       <section>
         <h2 className="type-section mb-1">
           Options ({session.options.length})
         </h2>
         {session.options.length === 0 ? (
-          <CanvasEmpty label="Chưa có phương án — dùng Intent «Sinh phương án»." />
+          <CanvasEmpty label="Chưa có phương án — dùng Bắt đầu phân tích (giai đoạn OPTIONS)." />
         ) : (
           <ul className="grid gap-2">
             {session.options.map((o) => (
@@ -172,7 +175,25 @@ export function DecisionCanvas(props: {
                 className="rounded border px-2 py-2"
                 style={{ borderColor: "var(--border)" }}
               >
-                <div className="font-medium">{o.title}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="font-medium">{o.title}</div>
+                  {o.proposedBy ? (
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                      data-testid={`option-proposed-by-${o.proposedBy}`}
+                      style={{
+                        color:
+                          o.proposedBy === "SECOND_OPINION"
+                            ? "var(--second-opinion)"
+                            : "var(--analyst)",
+                        background:
+                          "color-mix(in oklab, currentColor 14%, transparent)",
+                      }}
+                    >
+                      {o.proposedBy === "SECOND_OPINION" ? "2nd Opinion" : o.proposedBy}
+                    </span>
+                  ) : null}
+                </div>
                 <div style={{ color: "var(--text-muted)" }}>{o.description}</div>
               </li>
             ))}

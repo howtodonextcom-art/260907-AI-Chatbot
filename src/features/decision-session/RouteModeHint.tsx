@@ -7,16 +7,17 @@ const MODE_HINT: Record<
   { pipeline: string; debate: string }
 > = {
   QUICK: {
-    pipeline: "1 lần gọi (Groq)",
-    debate: "Không tranh luận đa vai",
+    pipeline: "1 lần gọi nhẹ",
+    debate: "Không chạy đủ quy trình quyết định",
   },
   STANDARD: {
-    pipeline: "Chỉ Analyst (Gemini)",
-    debate: "Không Critic/Judge — chọn DEEP để tranh luận",
+    pipeline: "Quy trình đầy đủ (Analyst theo giai đoạn)",
+    debate: "Không Critic/SecondOpinion/Judge — chọn DEEP để đa góc nhìn",
   },
   DEEP: {
-    pipeline: "Theo intent (không luôn đủ 4 vai)",
-    debate: "FRAME/OPTIONS: Analyst · CRITIQUE: Critic · VERIFY: tools · PREPARE: Judge",
+    pipeline: "Theo giai đoạn: FRAME→OPTIONS→CRITIQUE→VERIFY→PREPARE",
+    debate:
+      "Gửi = 1 giai đoạn (StageController). OPTIONS: Analyst+DeepSeek · CRITIQUE: Critic/Groq · PREPARE: Judge. DISCUSS/FRAME chỉ Analyst.",
   },
 };
 
@@ -38,7 +39,7 @@ export function RouteModeHint(props: {
       {judgeNeeded && props.routeMode !== "DEEP" ? (
         <>
           {" "}
-          Intent <strong>Chuẩn bị quyết định</strong> cần Mode{" "}
+          Intent nâng cao <strong>Chuẩn bị quyết định</strong> cần Mode{" "}
           <strong>DEEP</strong> để có bản nháp Judge.
         </>
       ) : null}

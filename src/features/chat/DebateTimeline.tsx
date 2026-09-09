@@ -56,8 +56,9 @@ export function DebateTimeline(props: {
         style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}
         data-testid="debate-timeline-empty"
       >
-        Timeline tranh luận: sau khi gửi, các vai Analyst → Critic → Judge sẽ
-        hiện lần lượt tại đây.
+        Timeline tranh luận: mỗi bước một vai. OPTIONS mới có DeepSeek;
+        CRITIQUE mới có Critic (Groq); PREPARE mới có Judge. Dùng{" "}
+        <strong>Bắt đầu phân tích</strong> để chạy hết quy trình.
       </div>
     );
   }

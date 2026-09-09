@@ -48,7 +48,7 @@ function stubStructured(request: NormalizedModelRequest): Record<string, unknown
   if (request.role === "CRITIC") {
     return {
       reply:
-        "The arithmetic MRR claim is checkable; live-broker execution remains out of scope. Prefer a readiness-lab MVP over a signal bot.",
+        "Phản bác Analyst: Readiness Lab MVP vẫn giả định người dùng trả tiền rehearsal mà chưa có evidence chuyển đổi.",
       criticisms: [
         "Do not treat unverified user claims as HIGH reliability",
         "Broker execution is a non-goal",
@@ -91,9 +91,19 @@ function stubStructured(request: NormalizedModelRequest): Record<string, unknown
   if (request.role === "SECOND_OPINION") {
     return {
       reply:
-        "Independent take: ship a readiness lab, not a copier. Keep risk-guard modules in v1.",
-      recommendedDirection: "Readiness Lab MVP",
-      preferredOptionTitle: "Readiness Lab MVP",
+        "Phương án khác: Simulator-first Challenge Gym — tập trung ngày giả lập trước checklist, không copier.",
+      recommendedDirection: "Simulator-first Challenge Gym",
+      preferredOptionTitle: "Simulator-first Challenge Gym",
+      independentOptions: [
+        {
+          title: "Simulator-first Challenge Gym",
+          description:
+            "Independent take: ship simulated challenge days before a journal-heavy lab.",
+          pros: ["Tests process under time pressure"],
+          cons: ["Heavier to build than a checklist MVP"],
+          risks: ["Scope creep into broker APIs"],
+        },
+      ],
       keyAssumptions: ["Traders will pay for rehearsal, not signals"],
       divergentRisks: ["Over-claiming pass rates"],
       additionalRisks: ["Scope creep into broker APIs"],

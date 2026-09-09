@@ -12,6 +12,11 @@ const ROLE_COLOR: Record<string, string> = {
   TOOL: "var(--text-muted)",
 };
 
+const ROLE_KICKER: Record<string, string> = {
+  CRITIC: "Phản bác Analyst",
+  SECOND_OPINION: "Phương án khác",
+};
+
 export function MessageBubble({ message }: { message: Message }) {
   const label =
     message.role === "USER"
@@ -21,6 +26,12 @@ export function MessageBubble({ message }: { message: Message }) {
     message.role === "USER"
       ? ROLE_COLOR.USER
       : ROLE_COLOR[message.agentRole ?? "ANALYST"];
+  const kicker = message.agentRole
+    ? ROLE_KICKER[message.agentRole]
+    : undefined;
+  const alreadyPrefixed =
+    Boolean(kicker) &&
+    message.content.trimStart().toLowerCase().startsWith(kicker!.toLowerCase());
 
   return (
     <article
@@ -40,9 +51,23 @@ export function MessageBubble({ message }: { message: Message }) {
             {message.provider}/{message.model}
           </span>
         ) : null}
+        {kicker ? (
+          <span
+            className="rounded px-1.5 py-0.5 font-medium"
+            data-testid="role-kicker"
+            style={{
+              color,
+              background: "color-mix(in oklab, currentColor 14%, transparent)",
+            }}
+          >
+            {kicker}
+          </span>
+        ) : null}
       </div>
       <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {message.content}
+        {alreadyPrefixed || !kicker
+          ? message.content
+          : `${kicker}: ${message.content}`}
       </div>
     </article>
   );

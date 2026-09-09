@@ -36,7 +36,8 @@ export async function POST(request: Request, { params }: Params) {
       return jsonError("NOT_FOUND", "Session not found", requestId);
     }
 
-    let userRequest: string = body.intent;
+    let userRequest =
+      body.intent ?? "Continue the automatic decision workflow.";
     if (body.messageId) {
       const messages = await repos.messages.listBySession(
         session.workspaceId,
@@ -44,7 +45,8 @@ export async function POST(request: Request, { params }: Params) {
         user.uid
       );
       const msg = messages.find((m) => m.id === body.messageId);
-      userRequest = msg?.content ?? body.intent;
+      userRequest =
+        msg?.content ?? body.intent ?? "Continue the automatic decision workflow.";
     } else {
       const messages = await repos.messages.listBySession(
         session.workspaceId,
@@ -52,7 +54,10 @@ export async function POST(request: Request, { params }: Params) {
         user.uid
       );
       const lastUser = [...messages].reverse().find((m) => m.role === "USER");
-      userRequest = lastUser?.content ?? body.intent;
+      userRequest =
+        lastUser?.content ??
+        body.intent ??
+        "Continue the automatic decision workflow.";
     }
 
     const stream = new ReadableStream({
