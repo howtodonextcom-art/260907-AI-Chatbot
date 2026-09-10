@@ -50,8 +50,18 @@ describe("state machine", () => {
         assumptionCount: 1,
         highPriorityOpenUnknowns: 0,
         domainValidationErrors: [],
+        contradictedAssumptionCount: 0,
       })
     ).toBe(true);
+    expect(
+      canEnterDecisionReady({
+        optionCount: 1,
+        assumptionCount: 1,
+        highPriorityOpenUnknowns: 0,
+        domainValidationErrors: [],
+        contradictedAssumptionCount: 1,
+      })
+    ).toBe(false);
   });
 });
 

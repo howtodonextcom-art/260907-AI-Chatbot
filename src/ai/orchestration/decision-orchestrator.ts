@@ -1380,6 +1380,9 @@ export async function* runDecisionOrchestrator(args: {
             sessionPatch.unknowns ?? args.session.unknowns;
           const highPriorityOpenUnknowns =
             countBlockingHighUnknowns(mergedUnknowns);
+          const contradictedAssumptionCount = mergedAssumptions.filter(
+            (a) => a.status === "CONTRADICTED"
+          ).length;
           if (
             judge.structured.decision === "EXPERIMENT_FIRST"
           ) {
@@ -1411,6 +1414,7 @@ export async function* runDecisionOrchestrator(args: {
                 // domainChecks already gated this run at entry (see above);
                 // no additional domain validation errors can exist here.
                 domainValidationErrors: [],
+                contradictedAssumptionCount,
               }
             );
             if (gated.applied) {
@@ -1755,6 +1759,9 @@ export function applyAnalystState(
     highPriorityOpenUnknowns: countBlockingHighUnknowns(unknowns),
     domainValidationErrors: [],
     userAskedGenerateOptions: intent === "GENERATE_OPTIONS",
+    contradictedAssumptionCount: assumptions.filter(
+      (a) => a.status === "CONTRADICTED"
+    ).length,
   };
 
   let status = session.status;
@@ -1947,6 +1954,9 @@ export async function approveDecision(args: {
         args.session.unknowns
       ),
       domainValidationErrors: domainValidation.errors,
+      contradictedAssumptionCount: args.session.assumptions.filter(
+        (a) => a.status === "CONTRADICTED"
+      ).length,
     },
     { origin: "HUMAN_APPROVE", approve: true }
   );

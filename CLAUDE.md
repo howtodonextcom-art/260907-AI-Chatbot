@@ -687,3 +687,57 @@ OPTIONS, CRITIQUE, VERIFY, PREPARE]`, `hasJudgeDraft: true`,
 (10/18 Unknown HIGH vẫn mở) và `status: "VALIDATING"` (không phải
 DECISION_READY) — đúng chính xác contract Soft Gate: pipeline không còn
 treo, nhưng business gate vẫn giữ nguyên. 0 lỗi console.
+
+## Fix bảo mật: [[contradicted-decision-ready-gap]] — P0-A (2026-09-10)
+
+**Lỗ hổng thật, xác nhận bằng đọc trực tiếp mã nguồn (không suy đoán):**
+`canEnterDecisionReady()` (`state-machine.ts`) chỉ kiểm tra
+`assumptionCount >= 1` — KHÔNG kiểm tra status của từng assumption. Một
+session có đủ `optionCount`, `assumptionCount`, 0 HIGH Unknown, 0 domain
+error nhưng có 1 assumption ở trạng thái `CONTRADICTED` (đã bị bác bỏ bởi
+evidence) vẫn PASS gate này và được phép vào `DECISION_READY` — mâu thuẫn
+trực tiếp với nguyên tắc "chỉ VERIFIED evidence/không-CONTRADICTED
+assumption mới được đưa vào quyết định" đã áp dụng ở `judgeDraft` (H8
+fix, `acceptedAssumptionIds` lọc `status !== "CONTRADICTED"`) nhưng chưa
+bao giờ được áp ở gate DECISION_READY thật sự. Đường khai thác thực tế:
+(a) Judge trả `decision: ACCEPT`/`ACCEPT_WITH_CHANGES` khi vẫn còn
+assumption CONTRADICTED trong session; (b) client PATCH trực tiếp
+`/api/sessions/:id` với `status: "DECISION_READY"`; (c) Analyst
+`suggestedStatus: "DECISION_READY"` qua `applyAnalystState()`. Cả ba
+route đều dùng chung `gateStatusTransition()`/`canEnterDecisionReady()`
+(đúng nguyên tắc [[transition-gate-unification]]) nên lỗ hổng tồn tại ở
+CẢ BA nơi cùng lúc — và fix một chỗ (thêm tham số vào gate) sửa cả ba.
+
+**Fix:** thêm field bắt buộc `contradictedAssumptionCount` vào
+`canEnterDecisionReady()` và `GatedTransitionContext`; gate trả `false`
+khi `contradictedAssumptionCount > 0`. Cập nhật 4 call site tính giá trị
+này từ danh sách assumption đã merge tại thời điểm gọi (không phải từ
+snapshot cũ): `decision-orchestrator.ts` (Judge ACCEPT path — dùng
+`mergedAssumptions`; `applyAnalystState()` — dùng `assumptions` vừa
+merge; `approveDecision()` — dùng `args.session.assumptions`, giữ để
+type-safe dù nhánh DECIDED không gọi `canEnterDecisionReady`),
+`parallel-frame-merge.ts` (đề xuất VALIDATING, không DECISION_READY, vẫn
+cần field để type-check), `app/api/sessions/[sessionId]/route.ts` (PATCH
+trực tiếp từ client — đường bypass nguy hiểm nhất vì không qua LLM).
+
+**Không đổi:** `HardPolicyGate`, `humanApproveProof`, `resolveUnknown()`
+empty-resolve ban, Pipeline Soft Gate ([[pipeline-soft-gate]]) — fix này
+chỉ thắt chặt gate DECISION_READY hiện có, không thêm gate mới, không
+đổi hành vi StageController.
+
+**Test:** `src/tests/unit/transition-gate.test.ts` — thêm test
+`gateStatusTransition` từ chối DECISION_READY khi
+`contradictedAssumptionCount: 1` dù mọi điều kiện khác pass; thêm test
+`applyAnalystState` bỏ qua `suggestedStatus: "DECISION_READY"` khi session
+có assumption CONTRADICTED thật (không phải giả lập gián tiếp qua
+optionCount/assumptionCount). `src/tests/unit/core.test.ts` — thêm case
+`canEnterDecisionReady` false khi `contradictedAssumptionCount: 1`. Toàn
+bộ 211 test (27 file) + `tsc --noEmit` pass sau fix.
+
+**Chưa làm (ngoài phạm vi P0-A, còn mở):** P0-B (trạng thái deploy thật
+của Firestore rules/indexes — chưa từng chạy `firebase deploy` trong
+phiên này, không được giả định là đã xong), P1 (`maxDuration` trên route
+`run`, persist `sessionPatch` ngay sau Parallel Frame thay vì chỉ ở cuối
+hàm), P2 (near-duplicate clustering cho Unknown/Assumption — hiện chỉ có
+exact-match dedup qua `dedupeByKey()`/`applyParallelFrameState()`), P2+
+(topical-relevance check cho `RESOLVE_WITH_EVIDENCE`).

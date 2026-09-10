@@ -43,11 +43,26 @@ export function canEnterDecisionReady(args: {
   assumptionCount: number;
   highPriorityOpenUnknowns: number;
   domainValidationErrors: string[];
+  /**
+   * P0-A fix: a CONTRADICTED assumption must never coexist with
+   * DECISION_READY/DECIDED — the session's own reasoning foundation is
+   * internally inconsistent. Mirrors the Pipeline Soft Gate's
+   * EVIDENCE_CONTRADICTION pipeline blocker (workflow-stage.ts
+   * collectPipelineBlockers), but that only stops the STAGE CONTROLLER
+   * from advancing — it never gated this, the actual LEGAL authority for
+   * DECISION_READY. Before this fix, an explicit-intent Judge run (H8
+   * path) or a direct client PATCH could reach DECISION_READY with a
+   * CONTRADICTED assumption still present, since this function never
+   * checked assumption status at all (only count). See CLAUDE.md
+   * [[contradicted-decision-ready-gap]].
+   */
+  contradictedAssumptionCount: number;
 }): boolean {
   if (args.optionCount < 1) return false;
   if (args.assumptionCount < 1) return false;
   if (args.highPriorityOpenUnknowns > 0) return false;
   if (args.domainValidationErrors.length > 0) return false;
+  if (args.contradictedAssumptionCount > 0) return false;
   return true;
 }
 
@@ -59,6 +74,7 @@ export interface GatedTransitionContext {
   highPriorityOpenUnknowns: number;
   domainValidationErrors: string[];
   userAskedGenerateOptions?: boolean;
+  contradictedAssumptionCount: number;
 }
 
 export interface GatedTransitionResult {
@@ -135,6 +151,7 @@ export function gateStatusTransition(
       assumptionCount: ctx.assumptionCount,
       highPriorityOpenUnknowns: ctx.highPriorityOpenUnknowns,
       domainValidationErrors: ctx.domainValidationErrors,
+      contradictedAssumptionCount: ctx.contradictedAssumptionCount,
     });
     if (!ok) {
       return {

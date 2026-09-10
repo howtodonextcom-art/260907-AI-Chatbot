@@ -12,6 +12,7 @@ describe("gateStatusTransition — single canonical authorization point", () => 
       assumptionCount: 5,
       highPriorityOpenUnknowns: 0,
       domainValidationErrors: [],
+      contradictedAssumptionCount: 0,
     });
     expect(result.applied).toBe(false);
     expect(result.status).toBe("DECISION_READY");
@@ -25,6 +26,7 @@ describe("gateStatusTransition — single canonical authorization point", () => 
       assumptionCount: 0,
       highPriorityOpenUnknowns: 0,
       domainValidationErrors: [],
+      contradictedAssumptionCount: 0,
     });
     expect(result.applied).toBe(false);
     expect(result.status).toBe("VALIDATING");
@@ -39,6 +41,7 @@ describe("gateStatusTransition — single canonical authorization point", () => 
       assumptionCount: 1,
       highPriorityOpenUnknowns: 0,
       domainValidationErrors: [],
+      contradictedAssumptionCount: 0,
     });
     expect(result.applied).toBe(true);
     expect(result.status).toBe("DECISION_READY");
@@ -52,6 +55,7 @@ describe("gateStatusTransition — single canonical authorization point", () => 
       assumptionCount: 0,
       highPriorityOpenUnknowns: 0,
       domainValidationErrors: [],
+      contradictedAssumptionCount: 0,
     });
     expect(result.applied).toBe(false);
   });
@@ -64,9 +68,29 @@ describe("gateStatusTransition — single canonical authorization point", () => 
       assumptionCount: 5,
       highPriorityOpenUnknowns: 0,
       domainValidationErrors: [],
+      contradictedAssumptionCount: 0,
     });
     expect(result.applied).toBe(false);
     expect(result.reason).toMatch(/Illegal transition/);
+  });
+
+  // P0-A: a CONTRADICTED assumption must block DECISION_READY even when
+  // every other requirement (options, assumption count, no HIGH unknowns,
+  // no domain errors) is otherwise satisfied — see CLAUDE.md
+  // [[contradicted-decision-ready-gap]].
+  it("rejects DECISION_READY when a CONTRADICTED assumption is present, even if all other requirements pass", () => {
+    const result = gateStatusTransition("VALIDATING", "DECISION_READY", {
+      problem: "p",
+      objective: "o",
+      optionCount: 1,
+      assumptionCount: 2,
+      highPriorityOpenUnknowns: 0,
+      domainValidationErrors: [],
+      contradictedAssumptionCount: 1,
+    });
+    expect(result.applied).toBe(false);
+    expect(result.status).toBe("VALIDATING");
+    expect(result.reason).toMatch(/canEnterDecisionReady/);
   });
 });
 
@@ -139,6 +163,40 @@ describe("applyAnalystState — Analyst cannot self-authorize DECISION_READY", (
       "DISCUSS"
     );
     expect(patch.status).toBe("DECISION_READY");
+  });
+
+  it("ignores suggestedStatus=DECISION_READY when an existing assumption is CONTRADICTED, even though options/assumption-count requirements pass", () => {
+    const session = baseSession({
+      status: "VALIDATING",
+      options: [
+        {
+          id: "o1",
+          title: "Option A",
+          description: "d",
+          pros: [],
+          cons: [],
+          risks: [],
+          evidenceIds: [],
+          status: "PROPOSED",
+        },
+      ],
+      assumptions: [
+        {
+          id: "a1",
+          statement: "assumption believed false by evidence",
+          status: "CONTRADICTED",
+          importance: "HIGH",
+          evidenceIds: [],
+        },
+      ],
+    });
+    const patch = applyAnalystState(
+      session,
+      { assumptions: [], unknowns: [], options: [], suggestedStatus: "DECISION_READY" },
+      "DISCUSS"
+    );
+    expect(patch.status).not.toBe("DECISION_READY");
+    expect(patch.status).toBe("VALIDATING");
   });
 
   it("still allows the conservative default advance DISCOVERY→VALIDATING when Analyst proposes nothing", () => {

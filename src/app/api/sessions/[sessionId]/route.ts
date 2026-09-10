@@ -53,13 +53,17 @@ export async function PATCH(request: Request, { params }: Params) {
     const patch = body as Partial<DecisionSession>;
     if (body.status && body.status !== session.status) {
       const unknowns = patch.unknowns ?? session.unknowns;
+      const assumptions = patch.assumptions ?? session.assumptions;
       const gated = gateStatusTransition(session.status, body.status, {
         problem: patch.problem ?? session.problem,
         objective: patch.objective ?? session.objective,
         optionCount: (patch.options ?? session.options).length,
-        assumptionCount: (patch.assumptions ?? session.assumptions).length,
+        assumptionCount: assumptions.length,
         highPriorityOpenUnknowns: countBlockingHighUnknowns(unknowns),
         domainValidationErrors: [],
+        contradictedAssumptionCount: assumptions.filter(
+          (a) => a.status === "CONTRADICTED"
+        ).length,
       });
       if (!gated.applied) {
         throw new AppError(

@@ -108,6 +108,9 @@ export function applyParallelFrameState(args: {
       highPriorityOpenUnknowns: countBlockingHighUnknowns(unknowns),
       domainValidationErrors: [],
       userAskedGenerateOptions: false,
+      contradictedAssumptionCount: assumptions.filter(
+        (a) => a.status === "CONTRADICTED"
+      ).length,
     },
     { origin: "AI_AGENT" }
   );
