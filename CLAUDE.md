@@ -600,3 +600,90 @@ vốn không check `ownerId`, giữ nguyên không thêm check mới). `create()
 tầng mới không có bằng chứng yêu cầu. Không sửa `memory-store.ts` (chỉ
 dùng cho dev/test, không có race đáng kể trong ngữ cảnh single-process
 test hiện tại, và nằm ngoài phạm vi "Firestore race condition").
+
+## Redesign thuật toán: [[pipeline-soft-gate]] (2026-09-10)
+
+**Triệu chứng thật (runtime, không phải giả thuyết):** sau khi Parallel
+Blind Framing (gemini∥deepseek∥groq) chạy xong FRAME, một session DEEP
+điển hình có ~8-10 HIGH Unknown mở (hợp lý — 3 framer độc lập tất yếu nêu
+ra nhiều câu hỏi hơn 1 Analyst). `decideWorkflowStage()` khi đó PAUSE
+tuyệt đối trước OPTIONS/CRITIQUE/PREPARE cho tới khi con số này về 0 —
+nhưng "0 HIGH Unknown" gần như không bao giờ đạt được chỉ bằng chat, vì
+mỗi vòng OPTIONS/CRITIQUE lại có thể phát sinh thêm Unknown mới. Kết quả:
+pipeline treo vĩnh viễn ngay sau FRAME, nút "Tiếp tục quy trình" vô tác
+dụng — không phải bug hiếm, mà là hành vi MẶC ĐỊNH của mọi session DEEP
+nghiêm túc.
+
+**Chẩn đoán gốc rễ:** `decideWorkflowStage()` (`workflow-stage.ts`) từng
+có BA lớp gate riêng biệt, chồng lặp, đều dùng chung một tín hiệu sai
+mục đích — `countBlockingHighUnknowns() > 0` — để chặn CẢ pipeline
+(StageController) LẪN business gate (DECISION_READY). Đây là hai câu hỏi
+khác nhau: "còn câu hỏi mở không" (đúng, luôn có ở early-stage) vs "có đủ
+điều kiện để CON NGƯỜI duyệt quyết định không" (câu hỏi thật). Conflating
+hai câu hỏi này là root cause — không phải feature Parallel Blind Framing
+(nó chỉ làm lộ bug vốn đã tồn tại, vì tạo ra volume Unknown lớn hơn nhiều
+so với single-Analyst).
+
+**Fix (Pipeline Soft Gate — đã chọn qua REQUIRED_OUTPUT phân tích 3 trụ
+cột, xem session redesign 2026-09-10):**
+- `collectPipelineBlockers()` (đổi tên từ `collectPauseBlockers()`) giờ
+  CHỈ trả về `EVIDENCE_CONTRADICTION` — assumption tự mâu thuẫn là lý do
+  DUY NHẤT còn hợp lý để dừng pipeline (xây OPTIONS/CRITIQUE/JudgeDraft
+  trên một giả định đã biết là sai khác về chất so với "còn câu hỏi mở").
+  HIGH Unknown (OPEN/VERIFY_NOW/EXPERIMENT_REQUIRED/HUMAN_DECISION_REQUIRED)
+  không còn nằm trong danh sách này.
+- Bỏ hoàn toàn "absolute post-selection gate" (đoạn code từng redirect
+  OPTIONS/CRITIQUE/PREPARE → VERIFY/PAUSE khi `remainingHigh > 0`) — dư
+  thừa, cùng một class bug với 2 lớp kia.
+- Nhánh PREPARE: Judge ĐƯỢC PHÉP chạy và tạo `judgeDraft` dù còn HIGH
+  Unknown mở — nhưng `readiness.ready`/`gateStatusTransition()`/
+  `canEnterDecisionReady()` (không đổi, vẫn là thẩm quyền duy nhất) tiếp
+  tục từ chối DECISION_READY cho tới khi `countBlockingHighUnknowns()===0`.
+  `judgeDraft` tồn tại ≠ session duyệt được — tách biệt này vốn đã đúng ở
+  tầng `approveDecision()`/`applyAnalystState()`, giờ StageController mới
+  thực sự tận dụng được nó thay vì tự chặn trước khi Judge kịp chạy.
+- `WorkflowDecision.blockers` chỉ mang `HIGH_UNKNOWNS_OPEN` ở trạng thái
+  TERMINAL (`COMPLETED` sau khi JudgeDraft đã tồn tại) — không bao giờ khi
+  `state==="RUNNING"` (đang tiến), để tránh `WorkflowStepper.tsx` (dấu
+  "BLOCKED !" khi `blockers.length>0` bất kể state) hiển thị sai một giai
+  đoạn đang chạy bình thường là "bị chặn". Banner "còn N HIGH Unknown" đã
+  tồn tại sẵn, độc lập, chính xác qua `computeReadiness()` ở Decision
+  Canvas ("Decision Readiness" + `judge-draft-panel`/`judge-blocked`) —
+  không cần thêm UI mới cho yêu cầu "không che rủi ro".
+- Dọn 4 chỗ debug leftover `fetch("http://127.0.0.1:7741/ingest/...")`
+  (2 trong `decision-orchestrator.ts`, 1 trong `workflow-stage.ts`, 1
+  trong `decision/route.ts`) — network call tới debug server nội bộ của
+  phiên làm việc trước, vô tình lọt vào code đã merge; nguy hiểm nếu chạy
+  production (leak nội dung request tới một cổng localhost không tồn tại
+  ở đó) dù bọc `.catch()`.
+
+**Không đổi (đã đúng từ trước, xác nhận qua audit):** `gateStatusTransition`/
+`canEnterDecisionReady`/`HardPolicyGate` vẫn là thẩm quyền duy nhất cho
+DECISION_READY/DECIDED; `humanApproveProof` (HMAC, server-mint) vẫn là
+đường duy nhất set `origin=HUMAN_APPROVE`; `resolveUnknown()` vẫn cấm
+empty-resolve; framer quorum ≥2 và Conflict Engine (deterministic, không
+LLM) không đổi.
+
+**Test:** `src/tests/unit/workflow-stage.test.ts` — 3 test cũ mã hoá đúng
+hành vi bug (PAUSED khi còn HIGH Unknown trước OPTIONS/CRITIQUE/PREPARE)
+được viết lại thành test mã hoá hành vi đúng (RUNNING, advance); thêm 1
+test xác nhận `EVIDENCE_CONTRADICTION` vẫn dừng pipeline (khác HIGH
+Unknown). `src/tests/integration/automatic-workflow.test.ts` — viết lại
+2 test: (1) HIGH Unknown không còn pause trước CRITIQUE; (2) test đầy đủ
+"reaches PREPARE despite HIGH Unknown open; DECISION_READY unlocks only
+after resolving it" — chạy `runDecisionOrchestrator` thật với scripted
+providers, xác nhận `judgeDraft` được tạo trong khi `session.status`
+KHÔNG lên DECISION_READY, rồi resolve Unknown + re-run với intent
+`PREPARE_DECISION` mới thấy DECISION_READY. Toàn bộ 212 test (27 file)
+pass, không có test nào khác bị ảnh hưởng.
+
+**Verify sống (MCP, không tin test giả):** tạo session DEEP thật trên
+Firebase project thật (domain Mega 6/45, cố tình chọn để tạo nhiều
+Unknown), chạy "Bắt đầu phân tích" (auto-workflow thật, real Gemini/Groq/
+DeepSeek calls). Kết quả đọc trực tiếp qua `fetch('/api/sessions/:id')`
+từ browser (không suy đoán từ UI text): `completedStages: [FRAME,
+OPTIONS, CRITIQUE, VERIFY, PREPARE]`, `hasJudgeDraft: true`,
+`judgeDecision: "EXPERIMENT_FIRST"`, đồng thời `highBlockingCount: 10`
+(10/18 Unknown HIGH vẫn mở) và `status: "VALIDATING"` (không phải
+DECISION_READY) — đúng chính xác contract Soft Gate: pipeline không còn
+treo, nhưng business gate vẫn giữ nguyên. 0 lỗi console.

@@ -5,7 +5,7 @@ import type { RouteMode } from "@/domain/decision/types";
 const FOOTER_BY_MODE: Record<RouteMode, string> = {
   QUICK: "QUICK: một lần gọi nhẹ",
   STANDARD: "STANDARD: quy trình đầy đủ (Analyst theo giai đoạn) · PREPARE = Judge quyết định",
-  DEEP: "DEEP: Gửi = 1 giai đoạn · Bắt đầu phân tích = cả pipeline. FRAME = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). HIGH Unknown pause trước OPTIONS. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.",
+  DEEP: "DEEP: Gửi = 1 giai đoạn · Bắt đầu phân tích = cả pipeline. FRAME = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). Pipeline luôn tiến tới PREPARE (Judge) kể cả khi còn HIGH Unknown — Unknown chỉ chặn lúc DUYỆT quyết định, không chặn quy trình. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.",
 };
 
 export function Composer(props: {

@@ -164,7 +164,11 @@ describe("decideWorkflowStage", () => {
     expect(d.nextStage).toBe("CRITIQUE");
   });
 
-  it("OPTIONS CURRENT + HIGH OPEN unknown → PAUSED (before CRITIQUE)", () => {
+  it("OPTIONS CURRENT + HIGH OPEN unknown → advances to CRITIQUE (Pipeline Soft Gate)", () => {
+    // HIGH Unknowns no longer pause the pipeline before OPTIONS/CRITIQUE/
+    // PREPARE — they remain a DECISION_READY-only blocker (see
+    // countBlockingHighUnknowns/gateStatusTransition). Only a genuine
+    // pipeline blocker (EVIDENCE_CONTRADICTION) still pauses here.
     const session = baseSession({
       latestSummary: "Framed",
       options: [
@@ -208,13 +212,13 @@ describe("decideWorkflowStage", () => {
       },
     });
     const d = decideWorkflowStage({ session, routeMode: "DEEP" });
-    expect(d.nextStage).toBeNull();
-    expect(d.shouldAdvance).toBe(false);
-    expect(d.state).toBe("PAUSED");
-    expect(d.blockers).toContain("HIGH_UNKNOWNS_OPEN");
+    expect(d.nextStage).toBe("CRITIQUE");
+    expect(d.shouldAdvance).toBe(true);
+    expect(d.state).toBe("RUNNING");
+    expect(d.blockers).toEqual([]);
   });
 
-  it("FRAME done + HIGH OPEN unknown → PAUSED before OPTIONS", () => {
+  it("FRAME done + HIGH OPEN unknown → advances to OPTIONS (Pipeline Soft Gate)", () => {
     const session = baseSession({
       latestSummary: "Multi-provider framing",
       unknowns: [
@@ -240,9 +244,41 @@ describe("decideWorkflowStage", () => {
       },
     });
     const d = decideWorkflowStage({ session, routeMode: "DEEP" });
+    expect(d.state).toBe("RUNNING");
+    expect(d.nextStage).toBe("OPTIONS");
+    expect(d.shouldAdvance).toBe(true);
+  });
+
+  it("EVIDENCE_CONTRADICTION still pauses the pipeline (unlike HIGH Unknowns)", () => {
+    const session = baseSession({
+      latestSummary: "Framed",
+      assumptions: [
+        {
+          id: "a1",
+          statement: "Market is growing",
+          status: "CONTRADICTED",
+          importance: "MEDIUM",
+          evidenceIds: [],
+        },
+      ],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "FRAME",
+        completedStages: ["FRAME"],
+        artifacts: {
+          FRAME: {
+            agentRunIds: ["r1"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const d = decideWorkflowStage({ session, routeMode: "DEEP" });
     expect(d.state).toBe("PAUSED");
     expect(d.nextStage).toBeNull();
-    expect(d.blockers).toContain("HIGH_UNKNOWNS_OPEN");
+    expect(d.blockers).toContain("EVIDENCE_CONTRADICTION");
+    expect(d.blockers).not.toContain("HIGH_UNKNOWNS_OPEN");
   });
 
   it("OPTIONS done + no HIGH unknowns → VERIFY before CRITIQUE when assumptions unverified", () => {
@@ -421,7 +457,7 @@ describe("decideWorkflowStage", () => {
     expect(d.nextStage).toBe("PREPARE");
   });
 
-  it("HIGH Unknown → PAUSED even after framing/options (human gate)", () => {
+  it("HIGH Unknown open after FRAME/OPTIONS/CRITIQUE/VERIFY → still reaches PREPARE (objective #1)", () => {
     const session = baseSession({
       latestSummary: "Framed",
       options: [
@@ -474,9 +510,11 @@ describe("decideWorkflowStage", () => {
       },
     });
     const d = decideWorkflowStage({ session, routeMode: "DEEP" });
-    expect(d.state).toBe("PAUSED");
-    expect(d.blockers).toContain("HIGH_UNKNOWNS_OPEN");
-    expect(d.shouldAdvance).toBe(false);
+    // Judge MAY run (JudgeDraft is not the same as DECISION_READY — see
+    // gateStatusTransition/canEnterDecisionReady, unaffected by this fix).
+    expect(d.state).toBe("RUNNING");
+    expect(d.nextStage).toBe("PREPARE");
+    expect(d.shouldAdvance).toBe(true);
   });
 
   it("resolution → resume toward PREPARE", () => {

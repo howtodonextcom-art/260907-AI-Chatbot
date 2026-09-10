@@ -76,25 +76,6 @@ export async function POST(request: Request, { params }: Params) {
       judgeRunId: body.judgeRunId,
     });
 
-    // #region agent log
-    fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "74ad39",
-      },
-      body: JSON.stringify({
-        sessionId: "74ad39",
-        runId: "post-fix",
-        hypothesisId: "V4-origin",
-        location: "decision/route.ts:POST",
-        message: "human approve proof verified; server sets HUMAN_APPROVE",
-        data: { sessionId, judgeRunId: body.judgeRunId },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
     const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
     // Origin is NEVER taken from the client — approveDecision hardcodes HUMAN_APPROVE.
     const decision = await approveDecision({

@@ -17,7 +17,7 @@ const MODE_HINT: Record<
   DEEP: {
     pipeline: "FRAME (parallel gemini∥deepseek∥groq) → VERIFY → OPTIONS → CRITIQUE → PREPARE",
     debate:
-      "Parallel Blind Framing lúc đầu. HIGH Unknown pause trước OPTIONS. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.",
+      "Parallel Blind Framing lúc đầu. HIGH Unknown không chặn pipeline (chỉ chặn DUYỆT quyết định) — Judge vẫn ra JudgeDraft. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.",
   },
 };
 

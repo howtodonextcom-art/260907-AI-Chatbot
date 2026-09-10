@@ -11,7 +11,6 @@ import type {
 } from "@/domain/decision/types";
 import {
   computeReadiness,
-  countBlockingHighUnknowns,
   isUnknownResolutionTerminal,
 } from "@/domain/decision/unknown-policy";
 
@@ -114,28 +113,24 @@ function hasBlockingUnverifiedAssumptions(session: DecisionSession): boolean {
   );
 }
 
-function collectPauseBlockers(session: DecisionSession): WorkflowBlockerCode[] {
+/**
+ * Pipeline Soft Gate (see CLAUDE.md [[pipeline-soft-gate]]): the ONLY
+ * blocker that halts StageController progression before OPTIONS/CRITIQUE/
+ * PREPARE is an internally-inconsistent CONTRADICTED assumption — building
+ * options/critique/JudgeDraft on top of a claim the system itself knows is
+ * false is qualitatively different from "there's an open question".
+ *
+ * HIGH Unknowns (OPEN/VERIFY_NOW/EXPERIMENT_REQUIRED/HUMAN_DECISION_REQUIRED
+ * — all non-terminal) deliberately do NOT appear here. They remain a
+ * DECISION_READY/DECIDED-only blocker via countBlockingHighUnknowns() /
+ * gateStatusTransition() / HardPolicyGate (unchanged, single authority) and
+ * stay fully visible via computeReadiness() (Decision Canvas "Decision
+ * Readiness" section, judge-draft-panel) — they are never hidden, only no
+ * longer allowed to stall the pipeline itself before a human has a JudgeDraft
+ * to actually react to.
+ */
+function collectPipelineBlockers(session: DecisionSession): WorkflowBlockerCode[] {
   const blockers: WorkflowBlockerCode[] = [];
-  if (countBlockingHighUnknowns(session.unknowns) > 0) {
-    blockers.push("HIGH_UNKNOWNS_OPEN");
-  }
-  if (
-    session.unknowns.some(
-      (u) =>
-        u.importance === "HIGH" && u.resolution === "EXPERIMENT_REQUIRED"
-    )
-  ) {
-    blockers.push("EXPERIMENT_REQUIRED");
-  }
-  if (
-    session.unknowns.some(
-      (u) =>
-        u.importance === "HIGH" &&
-        u.resolution === "HUMAN_DECISION_REQUIRED"
-    )
-  ) {
-    blockers.push("HUMAN_DECISION_REQUIRED");
-  }
   if (session.assumptions.some((a) => a.status === "CONTRADICTED")) {
     blockers.push("EVIDENCE_CONTRADICTION");
   }
@@ -196,70 +191,32 @@ export function decideWorkflowStage(args: {
     lastHumanMessage: args.lastHumanMessage,
   });
 
-  const pauseBlockers = collectPauseBlockers(session);
-  // Hard gate: after framing exists, unresolved HIGH unknowns (and related
-  // human blockers) pause BEFORE OPTIONS/CRITIQUE. VERIFY may still run so
-  // tool resolution can clear VERIFY_NOW unknowns/assumptions — but never
-  // advances to OPTIONS/CRITIQUE while remainingHigh > 0.
+  const pipelineBlockers = collectPipelineBlockers(session);
   const framingDone =
     hasFraming(session) || hasCurrentArtifact(workflow, "FRAME");
-  const remainingHigh = countBlockingHighUnknowns(session.unknowns);
-  const allowVerifyDespitePause =
-    pauseBlockers.length > 0 &&
-    needsVerify(session) &&
-    !hasCurrentArtifact(workflow, "VERIFY");
 
-  if (pauseBlockers.length > 0 && framingDone && !allowVerifyDespitePause) {
+  // Pipeline Soft Gate: only a genuine pipeline blocker (currently:
+  // EVIDENCE_CONTRADICTION) pauses StageController before OPTIONS/CRITIQUE/
+  // PREPARE. HIGH Unknowns are handled entirely below via the
+  // DECISION_READY/PREPARE readiness check — they never stop this branch.
+  if (pipelineBlockers.length > 0 && framingDone) {
     return {
       currentStage: workflow.currentStage,
       nextStage: null,
       shouldAdvance: false,
       state: "PAUSED",
-      blockers: pauseBlockers,
-      rationale: `Paused for human action before OPTIONS/CRITIQUE: ${pauseBlockers.join(", ")}`,
+      blockers: pipelineBlockers,
+      rationale: `Paused for human action: ${pipelineBlockers.join(", ")}`,
       invalidatedFromStage: materialInvalidation ?? undefined,
     };
   }
 
   let next: WorkflowStage;
 
-  if (materialInvalidation === "OPTIONS" && remainingHigh === 0) {
+  if (materialInvalidation === "OPTIONS") {
     next = "OPTIONS";
   } else if (!framingDone) {
     next = "FRAME";
-  } else if (allowVerifyDespitePause || (remainingHigh > 0 && needsVerify(session) && !hasCurrentArtifact(workflow, "VERIFY"))) {
-    // Verification-first while human blockers / HIGH unknowns exist.
-    // Absolute gate: HIGH remaining may only enter VERIFY, never OPTIONS.
-    next = "VERIFY";
-  } else if (remainingHigh > 0) {
-    // #region agent log
-    fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "74ad39",
-      },
-      body: JSON.stringify({
-        sessionId: "74ad39",
-        runId: "post-fix",
-        hypothesisId: "V3-high-gate",
-        location: "workflow-stage.ts:remainingHigh-pause",
-        message: "forced PAUSE — HIGH unknowns still blocking",
-        data: { remainingHigh, currentStage: workflow.currentStage },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-    return {
-      currentStage: workflow.currentStage,
-      nextStage: null,
-      shouldAdvance: false,
-      state: "PAUSED",
-      blockers:
-        pauseBlockers.length > 0 ? pauseBlockers : ["HIGH_UNKNOWNS_OPEN"],
-      rationale: `Absolute HIGH-unknown gate: remainingHigh=${remainingHigh}; stay VALIDATING/VERIFY until zero`,
-      invalidatedFromStage: materialInvalidation ?? undefined,
-    };
   } else if (
     hasBlockingUnverifiedAssumptions(session) &&
     !hasCurrentArtifact(workflow, "VERIFY")
@@ -291,14 +248,20 @@ export function decideWorkflowStage(args: {
       ).length,
     });
     if (!session.judgeDraft || artifactStatus(workflow, "PREPARE") === "STALE") {
-      if (!readiness.ready && pauseBlockers.length > 0) {
+      // Judge MAY run (and produce a JudgeDraft) with HIGH Unknowns still
+      // open — objective #1. `readiness.ready` and pipelineBlockers stay
+      // independent signals: readiness still reports NOT READY (surfaced on
+      // Decision Canvas / judge-draft-panel), and gateStatusTransition to
+      // DECISION_READY will still refuse while highPriorityOpenUnknowns > 0
+      // — Judge running is not the same as the session becoming approvable.
+      if (pipelineBlockers.length > 0) {
         return {
           currentStage: workflow.currentStage,
           nextStage: null,
           shouldAdvance: false,
           state: "PAUSED",
-          blockers: pauseBlockers,
-          rationale: "Readiness blockers require human before PREPARE.",
+          blockers: pipelineBlockers,
+          rationale: "Pipeline blockers require human before PREPARE.",
         };
       }
       next = "PREPARE";
@@ -308,29 +271,10 @@ export function decideWorkflowStage(args: {
         nextStage: null,
         shouldAdvance: false,
         state: "COMPLETED",
-        blockers: [],
-        rationale: "Prepare complete — awaiting human approval if ready.",
-      };
-    }
-  }
-
-  // Absolute post-selection gate: never emit OPTIONS/CRITIQUE/PREPARE while
-  // any HIGH unknown is still non-terminal.
-  if (
-    remainingHigh > 0 &&
-    (next === "OPTIONS" || next === "CRITIQUE" || next === "PREPARE")
-  ) {
-    if (needsVerify(session) && !hasCurrentArtifact(workflow, "VERIFY")) {
-      next = "VERIFY";
-    } else {
-      return {
-        currentStage: workflow.currentStage,
-        nextStage: null,
-        shouldAdvance: false,
-        state: "PAUSED",
-        blockers:
-          pauseBlockers.length > 0 ? pauseBlockers : ["HIGH_UNKNOWNS_OPEN"],
-        rationale: `Blocked stage ${next}: remainingHigh=${remainingHigh}`,
+        blockers: readiness.ready ? [] : ["HIGH_UNKNOWNS_OPEN"],
+        rationale: readiness.ready
+          ? "Prepare complete — awaiting human approval."
+          : "Prepare complete — JudgeDraft exists but readiness blockers (e.g. HIGH Unknowns) still require human action before approval.",
       };
     }
   }

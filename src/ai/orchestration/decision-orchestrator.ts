@@ -277,40 +277,6 @@ export async function* runDecisionOrchestrator(args: {
     userRequestedChallenge: args.intent === "CRITIQUE",
   });
 
-  // #region agent log
-  {
-    const env = getServerEnv();
-    fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "74ad39",
-      },
-      body: JSON.stringify({
-        sessionId: "74ad39",
-        runId: "mcp-verify",
-        hypothesisId: "A2-A5",
-        location: "decision-orchestrator.ts:after-routing",
-        message: "parallel framing routing decision",
-        data: {
-          workflowStage,
-          nextStage: workflowDecision.nextStage,
-          wfState: workflowDecision.state,
-          blockers: workflowDecision.blockers,
-          runParallelFraming: routing.runParallelFraming,
-          runAnalyst: routing.runAnalyst,
-          planStages: routing.plan.stages,
-          hasGemini: env.hasGemini,
-          hasDeepseek: env.hasDeepseek,
-          hasGroq: env.hasGroq,
-          highUnknownCount,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
-
   const priorState = args.session.workflow?.state;
   yield {
     event: priorState === "PAUSED" ? "workflow.resumed" : "workflow.started",
@@ -703,28 +669,6 @@ export async function* runDecisionOrchestrator(args: {
         attemptedProviders: providers,
       });
     } catch (error) {
-      // #region agent log
-      fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "74ad39",
-        },
-        body: JSON.stringify({
-          sessionId: "74ad39",
-          runId: "post-fix",
-          hypothesisId: "V1-quorum",
-          location: "decision-orchestrator.ts:quorum-fail",
-          message: "framer quorum rejected",
-          data: {
-            frameCount: frames.length,
-            failureCount: failures.length,
-            providers,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       yield {
         event: "run.failed",
         data: {
@@ -750,37 +694,6 @@ export async function* runDecisionOrchestrator(args: {
       divergentRisks: merged.framing?.conflictReport.coreDisagreements ?? [],
       updatedAt: new Date().toISOString(),
     });
-
-    // #region agent log
-    fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "74ad39",
-      },
-      body: JSON.stringify({
-        sessionId: "74ad39",
-        runId: "post-fix",
-        hypothesisId: "V1-quorum",
-        location: "decision-orchestrator.ts:parallel-frame-done",
-        message: "parallel blind framing completed with quorum",
-        data: {
-          providersAttempted: providers,
-          providersCompleted: frames.map((f) => f.provider),
-          frameCount: frames.length,
-          conflictTopics:
-            merged.framing?.conflictReport.conflictMap.coreDisagreements
-              .length ?? 0,
-          unknownCount: merged.patch.unknowns?.length ?? 0,
-          highUnknowns: countBlockingHighUnknowns(
-            merged.patch.unknowns ?? []
-          ),
-          assumptionCount: merged.patch.assumptions?.length ?? 0,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     // Skip sequential Analyst/SO/Critic for this FRAME tick — council already ran.
   }

@@ -375,7 +375,7 @@ describe("automatic workflow without manual Intent (v17)", () => {
     expect(soRuns).toHaveLength(1);
   });
 
-  it("DEEP HIGH OPEN unknowns pause — Critic does not run until human resolves", async () => {
+  it("DEEP HIGH OPEN unknowns do not pause — Critic still runs (Pipeline Soft Gate)", async () => {
     process.env.ENABLE_SECOND_OPINION = "true";
     process.env.DEEPSEEK_API_KEY = "sk-test";
     resetEnvCache();
@@ -435,16 +435,19 @@ describe("automatic workflow without manual Intent (v17)", () => {
       routeMode: "DEEP",
       lastHumanMessage: "Tiếp tục quy trình quyết định theo giai đoạn tiếp theo.",
     });
-    expect(decision.state).toBe("PAUSED");
-    expect(decision.blockers).toContain("HIGH_UNKNOWNS_OPEN");
-    expect(decision.nextStage).toBeNull();
+    // Objective #1: HIGH Unknowns no longer pause the pipeline before
+    // CRITIQUE — they remain a DECISION_READY-only blocker.
+    expect(decision.state).toBe("RUNNING");
+    expect(decision.nextStage).toBe("CRITIQUE");
+    expect(decision.shouldAdvance).toBe(true);
   });
 
-  it("pauses on HIGH Unknown and resumes after resolution", async () => {
+  it("reaches PREPARE (JudgeDraft) despite HIGH Unknown open; DECISION_READY unlocks only after resolving it", async () => {
     const repos = getRepositories();
     const now = new Date().toISOString();
     let session = await seedSession();
     session = await repos.sessions.update(session.workspaceId, session.id, "u1", {
+      status: "VALIDATING",
       latestSummary: "Framed",
       options: [
         {
@@ -490,9 +493,40 @@ describe("automatic workflow without manual Intent (v17)", () => {
       },
     });
 
-    const paused = decideWorkflowStage({ session, routeMode: "DEEP" });
-    expect(paused.state).toBe("PAUSED");
-    expect(paused.blockers).toContain("HIGH_UNKNOWNS_OPEN");
+    // Objective #1 (Pipeline Soft Gate): PREPARE is reachable with a HIGH
+    // Unknown still open — StageController no longer pauses here.
+    const reachable = decideWorkflowStage({ session, routeMode: "DEEP" });
+    expect(reachable.state).toBe("RUNNING");
+    expect(reachable.nextStage).toBe("PREPARE");
+    expect(reachable.shouldAdvance).toBe(true);
+
+    const gateway = new ModelGateway([
+      scriptedProvider("gemini", [prepareJson()]),
+      scriptedProvider("groq", [prepareJson()]),
+      scriptedProvider("deepseek", [prepareJson()]),
+    ]);
+
+    const events = await drain(
+      runDecisionOrchestrator({
+        repos,
+        session,
+        ownerId: "u1",
+        routeMode: "DEEP",
+        userRequest: "Continue the automatic decision workflow.",
+        requestId: "resume-1",
+        gateway,
+      })
+    );
+    const stage = events.find((e) => e.event === "workflow.stage.started");
+    expect(stage?.data.stage).toBe("PREPARE");
+    expect(events.some((e) => e.event === "run.failed")).toBe(false);
+
+    session = (await repos.sessions.getBySessionId(session.id, "u1"))!;
+    // Constraint #3 (unchanged authority): Judge produced a draft, but the
+    // HIGH Unknown still open means gateStatusTransition refuses
+    // DECISION_READY — JudgeDraft existing is not the same as approvable.
+    expect(session.judgeDraft?.decision).toBe("ACCEPT");
+    expect(session.status).not.toBe("DECISION_READY");
 
     session = await repos.sessions.update(session.workspaceId, session.id, "u1", {
       unknowns: [
@@ -509,31 +543,29 @@ describe("automatic workflow without manual Intent (v17)", () => {
       ],
     });
 
-    const gateway = new ModelGateway([
-      scriptedProvider("gemini", [prepareJson()]),
-      scriptedProvider("groq", [prepareJson()]),
-      scriptedProvider("deepseek", [prepareJson()]),
-    ]);
+    // JudgeDraft already exists and PREPARE is CURRENT (not STALE), so the
+    // automatic StageController now reports COMPLETED (awaiting human) —
+    // re-running Judge to re-confirm ACCEPT requires the explicit
+    // PREPARE_DECISION intent, same path the "Nâng cao / QA" UI control uses.
+    const afterResolve = decideWorkflowStage({ session, routeMode: "DEEP" });
+    expect(afterResolve.state).toBe("COMPLETED");
+    expect(afterResolve.blockers).toEqual([]);
 
-    const events = await drain(
+    const resumeEvents = await drain(
       runDecisionOrchestrator({
         repos,
         session,
         ownerId: "u1",
         routeMode: "DEEP",
+        intent: "PREPARE_DECISION",
         userRequest: "Continue after resolving unknown",
-        requestId: "resume-1",
+        requestId: "resume-2",
         gateway,
       })
     );
-    const stage = events.find((e) => e.event === "workflow.stage.started");
-    expect(stage?.data.stage).toBe("PREPARE");
-    expect(
-      events.some(
-        (e) =>
-          e.event === "workflow.resumed" || e.event === "workflow.started"
-      )
-    ).toBe(true);
+    expect(resumeEvents.some((e) => e.event === "run.failed")).toBe(false);
+    session = (await repos.sessions.getBySessionId(session.id, "u1"))!;
+    expect(session.status).toBe("DECISION_READY");
   });
 
   it("judgeDraft excludes CONTRADICTED assumptions and non-VERIFIED evidence (H8 fix)", async () => {

@@ -97,7 +97,7 @@ export function ChatPanel(props: {
                     props.workflow?.completedStages?.includes("OPTIONS") ||
                     props.workflow?.artifacts?.OPTIONS?.status === "CURRENT"
                   ? "Bước tiếp theo: CRITIQUE — Critic (Groq). Gửi = một giai đoạn (chạy Groq ngay). Bắt đầu phân tích = tiếp pipeline."
-                  : "FRAME/DISCOVERY = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). HIGH Unknowns pause before OPTIONS. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve."}
+                  : "FRAME/DISCOVERY = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). HIGH Unknowns không chặn pipeline (chỉ chặn duyệt quyết định). VERIFY trước CRITIQUE. DECIDED chỉ Human Approve."}
             </div>
           ) : null}
 
