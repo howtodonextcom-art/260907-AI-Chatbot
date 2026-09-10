@@ -55,6 +55,14 @@ function buildMessages(request: NormalizedModelRequest): ChatMessage[] {
   return messages;
 }
 
+function thinkingModeFor(request: NormalizedModelRequest) {
+  if (!request.outputSchemaName) return undefined;
+  return {
+    type: "disabled",
+    reasoning_effort: "none",
+  };
+}
+
 export class DeepSeekProvider implements ModelProvider {
   id = "deepseek";
   private modelName = getDefaultModel("deepseek");
@@ -62,10 +70,10 @@ export class DeepSeekProvider implements ModelProvider {
   capabilities(): ModelCapabilities {
     return {
       structuredOutput: true,
-      tools: false,
+      tools: true,
       streaming: true,
-      vision: false,
-      maxContextTokens: 128_000,
+      vision: true,
+      maxContextTokens: 1_000_000,
     };
   }
 
@@ -120,6 +128,7 @@ export class DeepSeekProvider implements ModelProvider {
           model: this.modelName,
           messages: buildMessages(request),
           max_tokens: request.maxOutputTokens,
+          thinking: thinkingModeFor(request),
           temperature: request.temperature ?? 0.4,
           response_format: request.outputSchemaName
             ? { type: "json_object" }
@@ -184,6 +193,7 @@ export class DeepSeekProvider implements ModelProvider {
           model: this.modelName,
           stream: true,
           max_tokens: request.maxOutputTokens,
+          thinking: thinkingModeFor(request),
           temperature: request.temperature ?? 0.4,
           messages: [
             { role: "system", content: request.systemInstructions },

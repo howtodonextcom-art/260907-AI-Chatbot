@@ -83,8 +83,8 @@ describe("hasDeepseek env flag", () => {
 });
 
 describe("deepseek registry", () => {
-  it("defaults to deepseek-chat", () => {
-    expect(getDefaultModel("deepseek")).toBe("deepseek-chat");
+  it("defaults to deepseek-flash", () => {
+    expect(getDefaultModel("deepseek")).toBe("deepseek-flash");
   });
 });
 
