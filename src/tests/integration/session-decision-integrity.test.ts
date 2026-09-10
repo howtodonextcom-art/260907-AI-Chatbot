@@ -131,13 +131,25 @@ describe("PATCH /api/sessions/:id — decision integrity (Test A/B/C)", () => {
 
 describe("POST /api/sessions/:id/decision — approval gate (Test D)", () => {
   it("fails when there is no JudgeDraft", async () => {
+    const { mintHumanApproveProof } = await import(
+      "@/infrastructure/api/human-approve-proof"
+    );
     const ws = await seedWorkspace(OWNER);
     const session = await seedSession({
       workspaceId: ws.id,
       status: "DECISION_READY",
     });
+    const proof = mintHumanApproveProof({
+      uid: OWNER,
+      sessionId: session.id,
+      judgeRunId: "run-1",
+    });
     const res = await postDecision(
-      req("POST", { judgeRunId: "run-1", approve: true }),
+      req("POST", {
+        judgeRunId: "run-1",
+        approve: true,
+        humanApproveProof: proof,
+      }),
       { params: Promise.resolve({ sessionId: session.id }) }
     );
     expect(res.status).toBe(409);

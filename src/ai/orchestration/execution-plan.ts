@@ -12,6 +12,7 @@ export type OrchestratorIntent = WorkflowIntent;
 export type ExecutionStage =
   | "VERIFY_TOOLS"
   | "ANALYST"
+  | "PARALLEL_FRAME"
   | "SECOND_OPINION"
   | "CRITIC"
   | "JUDGE";
@@ -29,6 +30,8 @@ export interface RoutingDecision {
   routeMode: RouteMode;
   runVerifyTools: boolean;
   runAnalyst: boolean;
+  /** DEEP FRAME: broadcast raw prompt to gemini∥deepseek∥groq, blind. */
+  runParallelFraming: boolean;
   runSecondOpinion: boolean;
   runCritic: boolean;
   runJudge: boolean;
@@ -43,6 +46,7 @@ function planFromFlags(args: {
   routeMode: RouteMode;
   runVerifyTools: boolean;
   runAnalyst: boolean;
+  runParallelFraming: boolean;
   runSecondOpinion: boolean;
   runCritic: boolean;
   runJudge: boolean;
@@ -50,6 +54,7 @@ function planFromFlags(args: {
 }): ExecutionPlan {
   const stages: ExecutionStage[] = [];
   if (args.runVerifyTools) stages.push("VERIFY_TOOLS");
+  if (args.runParallelFraming) stages.push("PARALLEL_FRAME");
   if (args.runAnalyst) stages.push("ANALYST");
   if (args.runSecondOpinion) stages.push("SECOND_OPINION");
   if (args.runCritic) stages.push("CRITIC");
@@ -59,7 +64,10 @@ function planFromFlags(args: {
     workflowStage: INTENT_TO_STAGE[args.intent],
     stages,
     reasons: args.reasons,
-    estimatedCalls: stages.length,
+    // Parallel framing burns up to 3 provider calls in one stage.
+    estimatedCalls: args.runParallelFraming
+      ? Math.max(stages.length, 3)
+      : stages.length,
     estimatedMaxCostUsd: DEFAULT_BUDGETS[args.routeMode].maxCostUsd,
   };
 }
@@ -100,6 +108,7 @@ export function decideRouting(args: {
       routeMode: partial.routeMode ?? args.routeMode,
       runVerifyTools: partial.runVerifyTools,
       runAnalyst: partial.runAnalyst,
+      runParallelFraming: partial.runParallelFraming ?? false,
       runSecondOpinion: partial.runSecondOpinion,
       runCritic: partial.runCritic,
       runJudge: partial.runJudge,
@@ -120,6 +129,7 @@ export function decideRouting(args: {
     return wrap({
       runVerifyTools: true,
       runAnalyst: false,
+      runParallelFraming: false,
       runSecondOpinion: false,
       runCritic: false,
       runJudge: false,
@@ -137,6 +147,7 @@ export function decideRouting(args: {
     return wrap({
       runVerifyTools: false,
       runAnalyst: true,
+      runParallelFraming: false,
       runSecondOpinion: false,
       runCritic: false,
       runJudge: false,
@@ -146,25 +157,20 @@ export function decideRouting(args: {
 
   if (args.routeMode === "STANDARD") {
     if (stage === "PREPARE") {
-      // Judge-only, mirroring DEEP PREPARE. Without this, Analyst-suggested
-      // DECISION_READY (applyAnalystState) leaves the session with no
-      // judgeDraft, and approveDecision requires judgeDraft to exist — so a
-      // STANDARD session could reach DECISION_READY and then never be
-      // approvable. STANDARD's own maxCalls budget (2) already accounted
-      // for this second call; see DEFAULT_BUDGETS comment in ai-budget.ts.
       return wrap({
         runVerifyTools: false,
         runAnalyst: false,
+        runParallelFraming: false,
         runSecondOpinion: false,
         runCritic: false,
         runJudge: flags.enableJudge,
         reasons: ["STANDARD PREPARE: Judge only, using prior Analyst artifacts"],
       });
     }
-    // STANDARD full workflow stages, Analyst-only (no Critic/SO).
     return wrap({
       runVerifyTools: false,
       runAnalyst: true,
+      runParallelFraming: false,
       runSecondOpinion: false,
       runCritic: false,
       runJudge: false,
@@ -177,32 +183,32 @@ export function decideRouting(args: {
     flags.enableSecondOpinion && Boolean(args.hasDeepseek);
 
   if (stage === "DISCUSS") {
+    // Discovery chat still uses Parallel Blind Framing when DEEP — no Gemini monopoly.
     return wrap({
       routeMode: "DEEP",
       runVerifyTools: false,
-      runAnalyst: true,
+      runAnalyst: false,
+      runParallelFraming: true,
       runSecondOpinion: false,
       runCritic: false,
       runJudge: false,
-      reasons: ["DEEP DISCUSS: Analyst"],
+      reasons: [
+        "DEEP DISCUSS/DISCOVERY: Parallel Blind Framing (gemini∥deepseek∥groq; quorum≥2)",
+      ],
     });
   }
 
   if (stage === "FRAME") {
-    const runCritic =
-      flags.enableCritic && Boolean(args.frameNeedsChallenge);
     return wrap({
       routeMode: "DEEP",
       runVerifyTools: false,
-      runAnalyst: true,
+      runAnalyst: false,
+      runParallelFraming: true,
       runSecondOpinion: false,
-      runCritic,
+      runCritic: false,
       runJudge: false,
       reasons: [
-        "DEEP FRAME: Analyst",
-        runCritic
-          ? "Critic joined due to ambiguity/high-impact framing"
-          : "Critic skipped (framing not high-impact)",
+        "DEEP FRAME: Parallel Blind Framing — quorum≥2; raw prompt broadcast; no silent single-provider degrade",
       ],
     });
   }
@@ -212,11 +218,12 @@ export function decideRouting(args: {
       routeMode: "DEEP",
       runVerifyTools: false,
       runAnalyst: true,
+      runParallelFraming: false,
       runSecondOpinion: hasSo,
       runCritic: false,
       runJudge: false,
       reasons: [
-        "DEEP OPTIONS: Analyst + independent SecondOpinion in parallel",
+        "DEEP OPTIONS: Analyst + independent SecondOpinion in parallel (post-Human framing gate)",
         hasSo ? "SecondOpinion enabled" : "SecondOpinion unavailable",
       ],
     });
@@ -232,11 +239,12 @@ export function decideRouting(args: {
       routeMode: "DEEP",
       runVerifyTools: false,
       runAnalyst: false,
+      runParallelFraming: false,
       runSecondOpinion: runSo,
       runCritic: flags.enableCritic,
       runJudge: false,
       reasons: [
-        "DEEP CRITIQUE: Critic",
+        "DEEP CRITIQUE: Critic (only after VERIFY when required)",
         runSo
           ? "SecondOpinion re-engaged"
           : "SecondOpinion skipped (already contributed or unavailable)",
@@ -245,11 +253,11 @@ export function decideRouting(args: {
   }
 
   if (stage === "PREPARE") {
-    // Judge only — use canonical prior artifacts; do not rerun Analyst+SO+Critic.
     return wrap({
       routeMode: "DEEP",
       runVerifyTools: false,
       runAnalyst: false,
+      runParallelFraming: false,
       runSecondOpinion: false,
       runCritic: false,
       runJudge: flags.enableJudge,
@@ -263,6 +271,7 @@ export function decideRouting(args: {
     routeMode: "DEEP",
     runVerifyTools: false,
     runAnalyst: true,
+    runParallelFraming: false,
     runSecondOpinion: false,
     runCritic: false,
     runJudge: false,

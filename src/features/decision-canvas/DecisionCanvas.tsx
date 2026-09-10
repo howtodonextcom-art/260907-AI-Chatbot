@@ -6,6 +6,7 @@ import type { Blueprint } from "@/domain/blueprint/types";
 import { LabMark } from "@/components/ui/LabMark";
 import { UnknownsPanel } from "@/features/decision-canvas/UnknownsPanel";
 import { DebateNotesPanel } from "@/features/decision-canvas/DebateNotesPanel";
+import { ConflictMapPanel } from "@/features/decision-canvas/ConflictMapPanel";
 import type { ResolveUnknownPayload } from "@/features/decision-canvas/types";
 import { computeReadiness } from "@/domain/decision/unknown-policy";
 
@@ -131,6 +132,8 @@ export function DecisionCanvas(props: {
           </ul>
         ) : null}
       </section>
+
+      <ConflictMapPanel report={session.workflow?.framing?.conflictReport} />
 
       <section>
         <h2 className="type-section mb-1">

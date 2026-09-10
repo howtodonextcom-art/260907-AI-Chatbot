@@ -1,6 +1,6 @@
 "use client";
 
-import type { WorkflowLastRun } from "@/domain/decision/types";
+import type { WorkflowLastRun, WorkflowLastRunRole } from "@/domain/decision/types";
 
 const ROLE_LABEL: Record<string, string> = {
   ANALYST: "Analyst",
@@ -8,6 +8,7 @@ const ROLE_LABEL: Record<string, string> = {
   CRITIC: "Critic",
   JUDGE: "Judge",
   VERIFY_TOOLS: "Tools",
+  PARALLEL_FRAME: "Parallel Frame",
 };
 
 function mark(status: string | undefined): string {
@@ -15,6 +16,31 @@ function mark(status: string | undefined): string {
   if (status === "FAILED") return "✗";
   if (status === "SKIPPED") return "–";
   return "○";
+}
+
+function chipEntries(props: {
+  lastRun?: WorkflowLastRun;
+  plannedStages?: string[];
+}): Array<{ key: string; label: string; role?: WorkflowLastRunRole }> {
+  const planned =
+    props.lastRun?.plannedStages ?? props.plannedStages ?? [];
+  const roles = props.lastRun?.roles ?? [];
+
+  // Parallel Blind Framing plans one stage but records N provider roles.
+  if (planned.includes("PARALLEL_FRAME") && roles.length > 0) {
+    return roles.map((role, idx) => ({
+      key: `pf-${role.provider ?? role.role}-${idx}`,
+      label: `Framer`,
+      role,
+    }));
+  }
+
+  const byRole = new Map(roles.map((r) => [r.role, r]));
+  return planned.map((stage, idx) => ({
+    key: `${stage}-${idx}`,
+    label: ROLE_LABEL[stage] ?? stage,
+    role: byRole.get(stage),
+  }));
 }
 
 export function RunStageChips(props: {
@@ -26,9 +52,7 @@ export function RunStageChips(props: {
     props.lastRun?.plannedStages ?? props.plannedStages ?? [];
   if (planned.length === 0 && !(props.livePartials?.length)) return null;
 
-  const byRole = new Map(
-    (props.lastRun?.roles ?? []).map((r) => [r.role, r])
-  );
+  const entries = chipEntries(props);
 
   return (
     <div
@@ -41,36 +65,33 @@ export function RunStageChips(props: {
         {props.lastRun?.stage ? ` · ${props.lastRun.stage}` : ""}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
-        {planned.map((stage, idx) => {
-          const role = byRole.get(stage);
-          return (
-            <span key={`${stage}-${idx}`} className="flex items-center gap-1.5">
-              {idx > 0 ? (
-                <span aria-hidden style={{ color: "var(--text-muted)" }}>
-                  →
-                </span>
-              ) : null}
-              <span
-                className="rounded px-1.5 py-0.5 text-xs font-semibold"
-                data-status={role?.status ?? "PLANNED"}
-                style={{
-                  color:
-                    role?.status === "FAILED"
-                      ? "var(--danger)"
-                      : role?.status === "COMPLETED"
-                        ? "var(--ok, #3dd68c)"
-                        : "var(--text-muted)",
-                  background:
-                    "color-mix(in oklab, currentColor 14%, transparent)",
-                }}
-                title={role?.message ?? role?.provider}
-              >
-                {mark(role?.status)} {ROLE_LABEL[stage] ?? stage}
-                {role?.provider ? ` · ${role.provider}` : ""}
+        {entries.map((entry, idx) => (
+          <span key={entry.key} className="flex items-center gap-1.5">
+            {idx > 0 ? (
+              <span aria-hidden style={{ color: "var(--text-muted)" }}>
+                →
               </span>
+            ) : null}
+            <span
+              className="rounded px-1.5 py-0.5 text-xs font-semibold"
+              data-status={entry.role?.status ?? "PLANNED"}
+              style={{
+                color:
+                  entry.role?.status === "FAILED"
+                    ? "var(--danger)"
+                    : entry.role?.status === "COMPLETED"
+                      ? "var(--ok, #3dd68c)"
+                      : "var(--text-muted)",
+                background:
+                  "color-mix(in oklab, currentColor 14%, transparent)",
+              }}
+              title={entry.role?.message ?? entry.role?.provider}
+            >
+              {mark(entry.role?.status)} {entry.label}
+              {entry.role?.provider ? ` · ${entry.role.provider}` : ""}
             </span>
-          );
-        })}
+          </span>
+        ))}
       </div>
       {(props.livePartials ?? [])
         .filter((p) => p.message)
@@ -87,14 +108,15 @@ export function RunStageChips(props: {
         ))}
       {(props.lastRun?.roles ?? [])
         .filter((r) => r.status === "FAILED" && r.message)
-        .map((r) => (
+        .map((r, i) => (
           <p
-            key={`fail-${r.role}`}
+            key={`fail-${r.role}-${r.provider ?? i}`}
             className="mt-1 text-xs"
             style={{ color: "var(--warn)" }}
             data-testid="run-partial-note"
           >
-            {r.role}: {r.message}
+            {r.role}
+            {r.provider ? `/${r.provider}` : ""}: {r.message}
           </p>
         ))}
     </div>

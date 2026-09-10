@@ -96,15 +96,21 @@ function needsVerify(session: DecisionSession): boolean {
   const unverifiedAssumptions = session.assumptions.some(
     (a) => a.status === "UNVERIFIED" && a.importance !== "LOW"
   );
+  // Only VERIFY_NOW unknowns are tool-routable. HIGH+OPEN requires human
+  // resolution (pause), not an automatic VERIFY detour.
   const verifyUnknowns = session.unknowns.some(
     (u) =>
       !isUnknownResolutionTerminal(u.resolution) &&
-      (u.resolution === "VERIFY_NOW" || u.importance === "HIGH")
+      u.resolution === "VERIFY_NOW"
   );
   const neverVerified = !hasCurrentArtifact(session.workflow, "VERIFY");
-  return (
-    (unverifiedAssumptions || verifyUnknowns || session.assumptions.length > 0) &&
-    neverVerified
+  return (unverifiedAssumptions || verifyUnknowns) && neverVerified;
+}
+
+/** Non-LOW unverified assumptions block OPTIONS/CRITIQUE until VERIFY runs. */
+function hasBlockingUnverifiedAssumptions(session: DecisionSession): boolean {
+  return session.assumptions.some(
+    (a) => a.status === "UNVERIFIED" && a.importance !== "LOW"
   );
 }
 
@@ -191,47 +197,83 @@ export function decideWorkflowStage(args: {
   });
 
   const pauseBlockers = collectPauseBlockers(session);
-  // After OPTIONS, still run CRITIQUE (DEEP: Groq Critic) even if HIGH
-  // unknowns are OPEN — critique is not a legal Decision gate. Pause for
-  // human unknown-resolution before PREPARE (and still block DECISION_READY).
-  const pastOptions =
-    session.options.length > 0 &&
-    (hasCurrentArtifact(workflow, "OPTIONS") ||
-      workflow.completedStages.includes("OPTIONS"));
-  const critiquePending =
-    routeMode !== "QUICK" && !hasCurrentArtifact(workflow, "CRITIQUE");
+  // Hard gate: after framing exists, unresolved HIGH unknowns (and related
+  // human blockers) pause BEFORE OPTIONS/CRITIQUE. VERIFY may still run so
+  // tool resolution can clear VERIFY_NOW unknowns/assumptions — but never
+  // advances to OPTIONS/CRITIQUE while remainingHigh > 0.
+  const framingDone =
+    hasFraming(session) || hasCurrentArtifact(workflow, "FRAME");
+  const remainingHigh = countBlockingHighUnknowns(session.unknowns);
+  const allowVerifyDespitePause =
+    pauseBlockers.length > 0 &&
+    needsVerify(session) &&
+    !hasCurrentArtifact(workflow, "VERIFY");
 
-  if (pauseBlockers.length > 0 && pastOptions && !critiquePending) {
-    // Still allow VERIFY to attempt tool resolution when unknowns ask VERIFY_NOW
-    // and VERIFY artifact is missing — otherwise pause for human.
-    const allowVerifyDespitePause =
-      pauseBlockers.includes("HIGH_UNKNOWNS_OPEN") &&
-      needsVerify(session) &&
-      !hasCurrentArtifact(workflow, "VERIFY");
-    if (!allowVerifyDespitePause) {
-      return {
-        currentStage: workflow.currentStage,
-        nextStage: null,
-        shouldAdvance: false,
-        state: "PAUSED",
-        blockers: pauseBlockers,
-        rationale: `Paused for human action: ${pauseBlockers.join(", ")}`,
-        invalidatedFromStage: materialInvalidation ?? undefined,
-      };
-    }
+  if (pauseBlockers.length > 0 && framingDone && !allowVerifyDespitePause) {
+    return {
+      currentStage: workflow.currentStage,
+      nextStage: null,
+      shouldAdvance: false,
+      state: "PAUSED",
+      blockers: pauseBlockers,
+      rationale: `Paused for human action before OPTIONS/CRITIQUE: ${pauseBlockers.join(", ")}`,
+      invalidatedFromStage: materialInvalidation ?? undefined,
+    };
   }
 
   let next: WorkflowStage;
 
-  if (materialInvalidation === "OPTIONS") {
+  if (materialInvalidation === "OPTIONS" && remainingHigh === 0) {
     next = "OPTIONS";
-  } else if (!hasFraming(session) && !hasCurrentArtifact(workflow, "FRAME")) {
+  } else if (!framingDone) {
     next = "FRAME";
-  } else if (session.options.length === 0 || !hasCurrentArtifact(workflow, "OPTIONS")) {
-    next =
-      hasFraming(session) || hasCurrentArtifact(workflow, "FRAME")
-        ? "OPTIONS"
-        : "FRAME";
+  } else if (allowVerifyDespitePause || (remainingHigh > 0 && needsVerify(session) && !hasCurrentArtifact(workflow, "VERIFY"))) {
+    // Verification-first while human blockers / HIGH unknowns exist.
+    // Absolute gate: HIGH remaining may only enter VERIFY, never OPTIONS.
+    next = "VERIFY";
+  } else if (remainingHigh > 0) {
+    // #region agent log
+    fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "74ad39",
+      },
+      body: JSON.stringify({
+        sessionId: "74ad39",
+        runId: "post-fix",
+        hypothesisId: "V3-high-gate",
+        location: "workflow-stage.ts:remainingHigh-pause",
+        message: "forced PAUSE — HIGH unknowns still blocking",
+        data: { remainingHigh, currentStage: workflow.currentStage },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+    return {
+      currentStage: workflow.currentStage,
+      nextStage: null,
+      shouldAdvance: false,
+      state: "PAUSED",
+      blockers:
+        pauseBlockers.length > 0 ? pauseBlockers : ["HIGH_UNKNOWNS_OPEN"],
+      rationale: `Absolute HIGH-unknown gate: remainingHigh=${remainingHigh}; stay VALIDATING/VERIFY until zero`,
+      invalidatedFromStage: materialInvalidation ?? undefined,
+    };
+  } else if (
+    hasBlockingUnverifiedAssumptions(session) &&
+    !hasCurrentArtifact(workflow, "VERIFY")
+  ) {
+    // Do not debate OPTIONS/CRITIQUE on unverified non-LOW assumptions.
+    next = "VERIFY";
+  } else if (
+    session.options.length === 0 ||
+    !hasCurrentArtifact(workflow, "OPTIONS")
+  ) {
+    next = "OPTIONS";
+  } else if (needsVerify(session) && !hasCurrentArtifact(workflow, "VERIFY")) {
+    // VERIFY MUST run before CRITIQUE when verification work remains.
+    next = "VERIFY";
   } else if (
     !hasCurrentArtifact(workflow, "CRITIQUE") &&
     routeMode !== "QUICK"
@@ -268,6 +310,27 @@ export function decideWorkflowStage(args: {
         state: "COMPLETED",
         blockers: [],
         rationale: "Prepare complete — awaiting human approval if ready.",
+      };
+    }
+  }
+
+  // Absolute post-selection gate: never emit OPTIONS/CRITIQUE/PREPARE while
+  // any HIGH unknown is still non-terminal.
+  if (
+    remainingHigh > 0 &&
+    (next === "OPTIONS" || next === "CRITIQUE" || next === "PREPARE")
+  ) {
+    if (needsVerify(session) && !hasCurrentArtifact(workflow, "VERIFY")) {
+      next = "VERIFY";
+    } else {
+      return {
+        currentStage: workflow.currentStage,
+        nextStage: null,
+        shouldAdvance: false,
+        state: "PAUSED",
+        blockers:
+          pauseBlockers.length > 0 ? pauseBlockers : ["HIGH_UNKNOWNS_OPEN"],
+        rationale: `Blocked stage ${next}: remainingHigh=${remainingHigh}`,
       };
     }
   }

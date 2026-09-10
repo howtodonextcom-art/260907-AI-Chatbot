@@ -15,9 +15,9 @@ const MODE_HINT: Record<
     debate: "Không Critic/SecondOpinion/Judge — chọn DEEP để đa góc nhìn",
   },
   DEEP: {
-    pipeline: "Theo giai đoạn: FRAME→OPTIONS→CRITIQUE→VERIFY→PREPARE",
+    pipeline: "FRAME (parallel gemini∥deepseek∥groq) → VERIFY → OPTIONS → CRITIQUE → PREPARE",
     debate:
-      "Gửi = 1 giai đoạn (StageController). OPTIONS: Analyst+DeepSeek · rồi CRITIQUE: Critic/Groq (không pause vì Unknown HIGH). PREPARE: Judge. DISCUSS/FRAME chỉ Analyst.",
+      "Parallel Blind Framing lúc đầu. HIGH Unknown pause trước OPTIONS. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.",
   },
 };
 

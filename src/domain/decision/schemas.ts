@@ -141,10 +141,14 @@ export const RunSessionSchema = z.object({
   messageId: z.string().optional(),
 });
 
-export const ApproveDecisionSchema = z.object({
-  judgeRunId: z.string(),
-  approve: z.literal(true),
-});
+export const ApproveDecisionSchema = z
+  .object({
+    judgeRunId: z.string().min(1),
+    approve: z.literal(true),
+    /** Server-minted HMAC proof from GET /decision — never forge origin. */
+    humanApproveProof: z.string().min(16),
+  })
+  .strict();
 
 export const CreateBlueprintSchema = z.object({
   sourceDecisionRecordId: z.string(),

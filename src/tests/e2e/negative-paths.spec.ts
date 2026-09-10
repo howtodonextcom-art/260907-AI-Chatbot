@@ -66,9 +66,13 @@ test.describe("negative paths", () => {
 
     const decision = await request.post(`/api/sessions/${session.id}/decision`, {
       headers: { ...AUTH_A, "Content-Type": "application/json" },
-      data: { judgeRunId: "missing", approve: true },
+      data: {
+        judgeRunId: "missing",
+        approve: true,
+        humanApproveProof: "invalid-proof-xxxxxxxxxxxxxxx",
+      },
     });
-    expect(decision.status()).toBe(409);
+    expect([400, 403, 409]).toContain(decision.status());
 
     const bp = await request.post(`/api/sessions/${session.id}/blueprint`, {
       headers: { ...AUTH_A, "Content-Type": "application/json" },

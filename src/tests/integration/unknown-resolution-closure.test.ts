@@ -194,7 +194,11 @@ describe("Full decision closure loop (v13 §44 — mandatory release test)", () 
     expect(blockedTransition.status).toBe(409);
 
     const blockedApprove = await postDecision(
-      req("POST", { judgeRunId: "run-1", approve: true }),
+      req("POST", {
+        judgeRunId: "run-1",
+        approve: true,
+        humanApproveProof: "not-a-valid-proof-xxxxxxxx",
+      }),
       { params: Promise.resolve({ sessionId: session.id }) }
     );
     expect(blockedApprove.status).not.toBe(200);
@@ -238,8 +242,20 @@ describe("Full decision closure loop (v13 §44 — mandatory release test)", () 
     expect(unblocked.status).toBe(200);
 
     // 4. Explicit human approval → DECIDED + immutable DecisionRecord.
+    const { mintHumanApproveProof } = await import(
+      "@/infrastructure/api/human-approve-proof"
+    );
+    const proof = mintHumanApproveProof({
+      uid: OWNER,
+      sessionId: session.id,
+      judgeRunId: "run-1",
+    });
     const approved = await postDecision(
-      req("POST", { judgeRunId: "run-1", approve: true }),
+      req("POST", {
+        judgeRunId: "run-1",
+        approve: true,
+        humanApproveProof: proof,
+      }),
       { params: Promise.resolve({ sessionId: session.id }) }
     );
     expect(approved.status).toBe(201);

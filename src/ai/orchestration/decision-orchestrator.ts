@@ -5,6 +5,15 @@ import { runAnalyst } from "@/ai/agents/analyst";
 import { runCritic } from "@/ai/agents/critic";
 import { runJudge } from "@/ai/agents/judge";
 import { runSecondOpinion } from "@/ai/agents/second-opinion";
+import { runIndependentFramer } from "@/ai/agents/independent-framer";
+import { applyParallelFrameState } from "@/ai/orchestration/parallel-frame-merge";
+import {
+  assertFramerQuorum,
+  assertFramingProviderCapacity,
+  InsufficientFramersError,
+  selectFramingProviders,
+} from "@/ai/orchestration/parallel-framing";
+import type { PreferredProvider } from "@/ai/gateway/model-gateway";
 import { getServerEnv } from "@/config/env";
 import { buildCoreContext } from "@/ai/orchestration/context-builder";
 import { decideRouting, roleTokenCeiling } from "@/ai/orchestration/routing-policy";
@@ -166,6 +175,50 @@ export async function* runDecisionOrchestrator(args: {
   const workflowStage = resolved.stage;
   let workflowDecision = resolved.decision;
 
+  // Hard HITL pause: do not run agents while StageController is PAUSED
+  // (HIGH unknowns / human gates) unless caller forced an explicit intent.
+  if (
+    !args.intent &&
+    workflowDecision.state === "PAUSED" &&
+    !workflowDecision.shouldAdvance
+  ) {
+    const pausedWorkflow = {
+      ...(args.session.workflow ?? emptyWorkflowMetadata(args.routeMode)),
+      routeMode: args.routeMode,
+      state: "PAUSED" as const,
+      blockers: workflowDecision.blockers,
+      updatedAt: new Date().toISOString(),
+    };
+    await args.repos.sessions.update(
+      args.session.workspaceId,
+      args.session.id,
+      args.ownerId,
+      { workflow: pausedWorkflow }
+    );
+    yield {
+      event: "workflow.paused",
+      data: {
+        correlationId,
+        blockers: workflowDecision.blockers,
+        rationale: workflowDecision.rationale,
+      },
+    };
+    yield {
+      event: "run.completed",
+      data: {
+        correlationId,
+        status: "COMPLETED",
+        stopReason: "WORKFLOW_PAUSED",
+        calls: 0,
+        workflow: pausedWorkflow,
+        shouldAdvance: false,
+        nextStage: null,
+        workflowState: "PAUSED",
+      },
+    };
+    return;
+  }
+
   if (workflowDecision.invalidatedFromStage) {
     const now = new Date().toISOString();
     const baseWf =
@@ -223,6 +276,40 @@ export async function* runDecisionOrchestrator(args: {
     materialFactsChanged: Boolean(workflowDecision.invalidatedFromStage),
     userRequestedChallenge: args.intent === "CRITIQUE",
   });
+
+  // #region agent log
+  {
+    const env = getServerEnv();
+    fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "74ad39",
+      },
+      body: JSON.stringify({
+        sessionId: "74ad39",
+        runId: "mcp-verify",
+        hypothesisId: "A2-A5",
+        location: "decision-orchestrator.ts:after-routing",
+        message: "parallel framing routing decision",
+        data: {
+          workflowStage,
+          nextStage: workflowDecision.nextStage,
+          wfState: workflowDecision.state,
+          blockers: workflowDecision.blockers,
+          runParallelFraming: routing.runParallelFraming,
+          runAnalyst: routing.runAnalyst,
+          planStages: routing.plan.stages,
+          hasGemini: env.hasGemini,
+          hasDeepseek: env.hasDeepseek,
+          hasGroq: env.hasGroq,
+          highUnknownCount,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }
+  // #endregion
 
   const priorState = args.session.workflow?.state;
   yield {
@@ -418,6 +505,286 @@ export async function* runDecisionOrchestrator(args: {
     return;
   }
 
+  // --- Parallel Blind Framing (DEEP FRAME/DISCUSS) ---
+  // Broadcast raw human prompt to available providers concurrently.
+  // No framer sees another framer's output (allowFallback:false per pin).
+  if (routing.runParallelFraming) {
+    const env = getServerEnv();
+    let providers: PreferredProvider[] = [];
+    try {
+      providers = assertFramingProviderCapacity(selectFramingProviders(env));
+    } catch (error) {
+      const message =
+        error instanceof InsufficientFramersError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Framer capacity check failed";
+      yield {
+        event: "run.failed",
+        data: {
+          code: "INSUFFICIENT_FRAMER_QUORUM",
+          message,
+          failures:
+            error instanceof InsufficientFramersError ? error.failures : [],
+        },
+      };
+      return;
+    }
+
+    for (const provider of providers) {
+      yield {
+        event: "agent.started",
+        data: { role: "ANALYST", provider, parallelFraming: true },
+      };
+    }
+
+    const settled = await Promise.allSettled(
+      providers.map(async (provider) => {
+        const run = await args.repos.agentRuns.create({
+          workspaceId: args.session.workspaceId,
+          sessionId: args.session.id,
+          ownerId: args.ownerId,
+          role: "ANALYST",
+          routeMode: args.routeMode,
+          provider,
+          model: "pending",
+          promptVersion: "v1",
+          schemaVersion: "1.0",
+          status: "RUNNING",
+          startedAt: new Date().toISOString(),
+        });
+        try {
+          const result = await runIndependentFramer({
+            gateway,
+            provider,
+            request: {
+              routeMode: args.routeMode,
+              systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("ANALYST")}`,
+              messages: [{ role: "user", content: userContent }],
+              signal: args.signal,
+              maxOutputTokens: roleTokenCeiling("ANALYST", args.routeMode),
+              metadata: {
+                requestId: args.requestId,
+                workspaceId: args.session.workspaceId,
+                sessionId: args.session.id,
+                promptVersion: "v1",
+              },
+              outputSchemaName: domainPack.getOutputSchemaName("ANALYST"),
+            },
+          });
+          await args.repos.agentRuns.update(
+            args.session.workspaceId,
+            args.session.id,
+            run.id,
+            args.ownerId,
+            {
+              provider: result.provider,
+              model: result.model,
+              promptVersion: result.promptVersion,
+              schemaVersion: result.schemaVersion,
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              latencyMs: result.latencyMs,
+              costUsd: result.estimatedCostUsd,
+              status: "COMPLETED",
+              finishedAt: new Date().toISOString(),
+            }
+          );
+          await args.repos.messages.create({
+            workspaceId: args.session.workspaceId,
+            sessionId: args.session.id,
+            ownerId: args.ownerId,
+            role: "ASSISTANT",
+            content: `[Parallel Frame · ${result.provider}]\n${result.content}`,
+            runId: run.id,
+            agentRole: "ANALYST",
+            provider: result.provider,
+            model: result.model,
+            createdAt: new Date().toISOString(),
+          });
+          return {
+            ok: true as const,
+            provider,
+            runId: run.id,
+            result,
+          };
+        } catch (error) {
+          await args.repos.agentRuns.update(
+            args.session.workspaceId,
+            args.session.id,
+            run.id,
+            args.ownerId,
+            {
+              status: "FAILED",
+              errorCode: "PROVIDER_ERROR",
+              errorMessage:
+                error instanceof Error ? error.message : "Framer failed",
+              finishedAt: new Date().toISOString(),
+            }
+          );
+          return {
+            ok: false as const,
+            provider,
+            runId: run.id,
+            error:
+              error instanceof Error ? error.message.slice(0, 200) : "failed",
+          };
+        }
+      })
+    );
+
+    const framerRuns = settled.map((item, index) => {
+      if (item.status === "fulfilled") return item.value;
+      const provider = providers[index] ?? "gemini";
+      return {
+        ok: false as const,
+        provider,
+        runId: undefined as string | undefined,
+        error:
+          item.reason instanceof Error
+            ? item.reason.message.slice(0, 200)
+            : "framer rejected",
+      };
+    });
+
+    const frames = [];
+    const failures: Array<{ provider: string; error: string; runId?: string }> =
+      [];
+    for (const item of framerRuns) {
+      if (item.ok) {
+        totalCost += item.result.estimatedCostUsd ?? 0;
+        completedRunIds.push(item.runId);
+        frames.push({ ...item.result.frame, runId: item.runId });
+        lastRunRoles = recordLastRunRole(lastRunRoles, {
+          role: "ANALYST",
+          status: "COMPLETED",
+          provider: item.provider,
+          message: "parallel blind frame",
+        });
+        yield {
+          event: "agent.completed",
+          data: {
+            runId: item.runId,
+            role: "ANALYST",
+            provider: item.provider,
+            parallelFraming: true,
+          },
+        };
+      } else {
+        partial = true;
+        failures.push({
+          provider: item.provider,
+          error: item.error,
+          runId: item.runId,
+        });
+        lastRunRoles = recordLastRunRole(lastRunRoles, {
+          role: "ANALYST",
+          status: "FAILED",
+          provider: item.provider,
+          message: item.error,
+        });
+        yield {
+          event: "run.partial",
+          data: {
+            role: "ANALYST",
+            provider: item.provider,
+            message: `Parallel framer ${item.provider} failed: ${item.error}`,
+            retryable: true,
+          },
+        };
+      }
+    }
+
+    try {
+      assertFramerQuorum({
+        frames,
+        failures,
+        attemptedProviders: providers,
+      });
+    } catch (error) {
+      // #region agent log
+      fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "74ad39",
+        },
+        body: JSON.stringify({
+          sessionId: "74ad39",
+          runId: "post-fix",
+          hypothesisId: "V1-quorum",
+          location: "decision-orchestrator.ts:quorum-fail",
+          message: "framer quorum rejected",
+          data: {
+            frameCount: frames.length,
+            failureCount: failures.length,
+            providers,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      yield {
+        event: "run.failed",
+        data: {
+          code: "INSUFFICIENT_FRAMER_QUORUM",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Insufficient framer quorum",
+          failures:
+            error instanceof InsufficientFramersError ? error.failures : failures,
+        },
+      };
+      return;
+    }
+
+    const merged = applyParallelFrameState({
+      session: args.session,
+      frames,
+    });
+    sessionPatch = { ...sessionPatch, ...merged.patch };
+    analystContent = merged.patch.latestSummary ?? "";
+    debateNotes = mergeDebateNotes(debateNotes, {
+      divergentRisks: merged.framing?.conflictReport.coreDisagreements ?? [],
+      updatedAt: new Date().toISOString(),
+    });
+
+    // #region agent log
+    fetch("http://127.0.0.1:7741/ingest/bc7d4cca-eded-4559-8e61-3c173f46bff4", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "74ad39",
+      },
+      body: JSON.stringify({
+        sessionId: "74ad39",
+        runId: "post-fix",
+        hypothesisId: "V1-quorum",
+        location: "decision-orchestrator.ts:parallel-frame-done",
+        message: "parallel blind framing completed with quorum",
+        data: {
+          providersAttempted: providers,
+          providersCompleted: frames.map((f) => f.provider),
+          frameCount: frames.length,
+          conflictTopics:
+            merged.framing?.conflictReport.conflictMap.coreDisagreements
+              .length ?? 0,
+          unknownCount: merged.patch.unknowns?.length ?? 0,
+          highUnknowns: countBlockingHighUnknowns(
+            merged.patch.unknowns ?? []
+          ),
+          assumptionCount: merged.patch.assumptions?.length ?? 0,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+
+    // Skip sequential Analyst/SO/Critic for this FRAME tick — council already ran.
+  }
+
   // Kick off DeepSeek's independent second opinion CONCURRENTLY with Analyst
   // (not awaited yet) — see [[deepseek-second-opinion]] in CLAUDE.md for why
   // this exists. Only in DEEP, only when DeepSeek is actually configured;
@@ -431,9 +798,6 @@ export async function* runDecisionOrchestrator(args: {
             systemInstructions: `${systemInstructions}\n\n${domainPack.getRoleInstructions("SECOND_OPINION")}`,
             messages: [{ role: "user", content: userContent }],
             signal: args.signal,
-            // DeepSeek tends to be verbose; give real headroom so its JSON
-            // response completes instead of truncating mid-object (which
-            // silently loses agreementScore — see CLAUDE.md tech debt log).
             maxOutputTokens: roleTokenCeiling("SECOND_OPINION", args.routeMode),
             metadata: {
               requestId: args.requestId,
@@ -805,6 +1169,7 @@ export async function* runDecisionOrchestrator(args: {
   }
 
   // --- Critic (optional) ---
+
   if (routing.runCritic && !skipRemainder) {
     throwIfAborted();
     const criticSpend = canSpend(tracker, budget);
@@ -1288,6 +1653,8 @@ export async function* runDecisionOrchestrator(args: {
     };
   }
   nextWorkflow.debateNotes = debateNotes;
+  nextWorkflow.framing =
+    sessionPatch.workflow?.framing ?? args.session.workflow?.framing;
   nextWorkflow.lastRun = {
     stage: workflowStage,
     plannedStages: routing.plan.stages,
@@ -1645,11 +2012,36 @@ export async function approveDecision(args: {
     hasJudgeDraft: true,
     domainErrors: domainValidation.errors,
     budgetExceeded: false,
+    actionOrigin: "HUMAN_APPROVE",
   });
   if (!gate.passed) {
     throw new AppError(
       "SESSION_INVALID_STATE",
       gate.errors.map((e) => e.message).join("; "),
+      409
+    );
+  }
+
+  const gatedDecided = gateStatusTransition(
+    args.session.status,
+    "DECIDED",
+    {
+      problem: args.session.problem,
+      objective: args.session.objective,
+      optionCount: args.session.options.length,
+      assumptionCount: args.session.assumptions.length,
+      highPriorityOpenUnknowns: countBlockingHighUnknowns(
+        args.session.unknowns
+      ),
+      domainValidationErrors: domainValidation.errors,
+    },
+    { origin: "HUMAN_APPROVE", approve: true }
+  );
+  if (!gatedDecided.applied || gatedDecided.status !== "DECIDED") {
+    throw new AppError(
+      "SESSION_INVALID_STATE",
+      gatedDecided.reason ??
+        "DECIDED requires action.origin=HUMAN_APPROVE from explicit human approve",
       409
     );
   }
@@ -1739,7 +2131,7 @@ export async function approveDecision(args: {
     args.session.id,
     args.ownerId,
     {
-      status: "DECIDED",
+      status: gatedDecided.status,
       activeDecisionRecordId: record.id,
     }
   );

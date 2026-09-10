@@ -52,24 +52,27 @@ describe("execution plan — Mode × Stage matrix", () => {
     }
   });
 
-  it("DEEP FRAME is Analyst only unless frameNeedsChallenge", () => {
+  it("DEEP FRAME uses Parallel Blind Framing — not Gemini monopoly", () => {
     const plain = decideRouting({
       routeMode: "DEEP",
       intent: "FRAME_PROBLEM",
       evidenceCoverage: 0.2,
       importance: "MEDIUM",
     });
-    expect(plain.runAnalyst).toBe(true);
+    expect(plain.runParallelFraming).toBe(true);
+    expect(plain.runAnalyst).toBe(false);
     expect(plain.runCritic).toBe(false);
+    expect(plain.runSecondOpinion).toBe(false);
+    expect(plain.plan.stages).toContain("PARALLEL_FRAME");
 
-    const challenged = decideRouting({
+    const discuss = decideRouting({
       routeMode: "DEEP",
-      intent: "FRAME_PROBLEM",
+      intent: "DISCUSS",
       evidenceCoverage: 0.2,
-      importance: "HIGH",
-      frameNeedsChallenge: true,
+      importance: "MEDIUM",
     });
-    expect(challenged.runCritic).toBe(true);
+    expect(discuss.runParallelFraming).toBe(true);
+    expect(discuss.runAnalyst).toBe(false);
   });
 
   it("DEEP OPTIONS runs Analyst + SecondOpinion in parallel", () => {

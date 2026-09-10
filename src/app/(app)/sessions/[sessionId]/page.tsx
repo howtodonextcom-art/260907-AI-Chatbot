@@ -59,14 +59,19 @@ export default function SessionPage() {
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoStepLabel, setAutoStepLabel] = useState<string | null>(null);
+  const [humanApproveProof, setHumanApproveProof] = useState<string | null>(
+    null
+  );
   const abortRef = useRef<AbortController | null>(null);
   const stoppedRef = useRef(false);
 
   const loadAll = useCallback(async () => {
-    const s = await apiFetch<{ session: DecisionSession }>(
-      `/api/sessions/${sessionId}`
-    );
+    const s = await apiFetch<{
+      session: DecisionSession;
+      humanApproveProof?: string;
+    }>(`/api/sessions/${sessionId}`);
     setSession(s.session);
+    setHumanApproveProof(s.humanApproveProof ?? null);
     if (s.session.workflow?.routeMode) {
       setRouteMode(s.session.workflow.routeMode);
     }
@@ -76,9 +81,10 @@ export default function SessionPage() {
         `/api/sessions/${sessionId}/evidence`
       ),
       apiFetch<{ runs: AgentRun[] }>(`/api/sessions/${sessionId}/runs`),
-      apiFetch<{ decision: DecisionRecord | null }>(
-        `/api/sessions/${sessionId}/decision`
-      ),
+      apiFetch<{
+        decision: DecisionRecord | null;
+        humanApproveProof?: string;
+      }>(`/api/sessions/${sessionId}/decision`),
       apiFetch<{ blueprint: Blueprint | null }>(
         `/api/sessions/${sessionId}/blueprint`
       ),
@@ -93,6 +99,9 @@ export default function SessionPage() {
     setEvidence(ev.evidence);
     setRuns(rs.runs);
     setDecision(dec.decision);
+    if (dec.humanApproveProof) {
+      setHumanApproveProof(dec.humanApproveProof);
+    }
     setBlueprint(bp.blueprint);
     setSessions(list.sessions);
     setExperiments(ex.experiments);
@@ -369,18 +378,37 @@ export default function SessionPage() {
   async function approveDecision() {
     if (!session?.judgeDraft) return;
     try {
+      let proof = humanApproveProof;
+      if (!proof) {
+        const minted = await apiFetch<{ humanApproveProof?: string }>(
+          `/api/sessions/${sessionId}/decision`
+        );
+        proof = minted.humanApproveProof ?? null;
+        if (proof) setHumanApproveProof(proof);
+      }
+      if (!proof) {
+        setError(
+          "Thiếu humanApproveProof từ server — tải lại session rồi duyệt lại"
+        );
+        return;
+      }
       const data = await apiFetch<{ decision: DecisionRecord }>(
         `/api/sessions/${sessionId}/decision`,
         {
           method: "POST",
-          headers: { "Idempotency-Key": `approve-${session.judgeDraft.runId}` },
+          headers: {
+            "Idempotency-Key": `approve-${session.judgeDraft.runId}`,
+            "X-Human-Approve": "1",
+          },
           body: JSON.stringify({
             judgeRunId: session.judgeDraft.runId,
             approve: true,
+            humanApproveProof: proof,
           }),
         }
       );
       setDecision(data.decision);
+      setHumanApproveProof(null);
       await loadAll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Duyệt quyết định thất bại");

@@ -65,7 +65,7 @@ export function ChatPanel(props: {
 
   const emptyDescription =
     props.routeMode === "DEEP"
-      ? "Mode DEEP — đa góc nhìn: hệ thống tự tiến FRAME→OPTIONS→CRITIQUE→VERIFY→PREPARE. Bạn sở hữu quyết định cuối."
+      ? "Mode DEEP — Parallel Blind Framing rồi VERIFY→OPTIONS→CRITIQUE. Bạn sở hữu quyết định cuối (DECIDED)."
       : props.routeMode === "QUICK"
         ? "Mode QUICK chỉ 1 lần gọi nhẹ. Chọn STANDARD/DEEP để chạy quy trình quyết định đầy đủ."
         : "Mode STANDARD chạy quy trình đầy đủ với Analyst theo giai đoạn. Chọn DEEP để có Critic/SecondOpinion/Judge.";
@@ -97,7 +97,7 @@ export function ChatPanel(props: {
                     props.workflow?.completedStages?.includes("OPTIONS") ||
                     props.workflow?.artifacts?.OPTIONS?.status === "CURRENT"
                   ? "Bước tiếp theo: CRITIQUE — Critic (Groq). Gửi = một giai đoạn (chạy Groq ngay). Bắt đầu phân tích = tiếp pipeline."
-                  : "Bước DISCUSS/FRAME chỉ Analyst (Gemini). OPTIONS = DeepSeek. Bước sau OPTIONS là CRITIQUE (Groq) — không bị chặn bởi Unknown HIGH."}
+                  : "FRAME/DISCOVERY = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). HIGH Unknowns pause before OPTIONS. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve."}
             </div>
           ) : null}
 

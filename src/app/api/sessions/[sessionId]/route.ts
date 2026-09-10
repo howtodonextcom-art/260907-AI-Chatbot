@@ -11,6 +11,7 @@ import { gateStatusTransition } from "@/domain/decision/state-machine";
 import { countBlockingHighUnknowns } from "@/domain/decision/unknown-policy";
 import { AppError } from "@/infrastructure/api/errors";
 import type { DecisionSession } from "@/domain/decision/types";
+import { mintHumanApproveProof } from "@/infrastructure/api/human-approve-proof";
 
 type Params = { params: Promise<{ sessionId: string }> };
 
@@ -24,7 +25,15 @@ export async function GET(request: Request, { params }: Params) {
     if (!session) {
       return jsonError("NOT_FOUND", "Session not found", requestId);
     }
-    return jsonOk({ session, requestId });
+    let humanApproveProof: string | undefined;
+    if (session.status === "DECISION_READY" && session.judgeDraft?.runId) {
+      humanApproveProof = mintHumanApproveProof({
+        uid: user.uid,
+        sessionId,
+        judgeRunId: session.judgeDraft.runId,
+      });
+    }
+    return jsonOk({ session, humanApproveProof, requestId });
   } catch (error) {
     return handleRouteError(error, requestId);
   }

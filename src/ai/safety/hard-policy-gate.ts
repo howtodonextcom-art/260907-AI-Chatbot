@@ -23,6 +23,8 @@ export function gateDecisionApproval(args: {
   hasJudgeDraft: boolean;
   domainErrors: string[];
   budgetExceeded: boolean;
+  /** Must be HUMAN_APPROVE — AI/SYSTEM/USER_PATCH cannot approve DECIDED. */
+  actionOrigin?: string;
 }): GateResult {
   return hardPolicyGate([
     {
@@ -34,6 +36,11 @@ export function gateDecisionApproval(args: {
       code: "EXPLICIT_APPROVAL",
       passed: args.approve === true,
       message: "Explicit user approval required",
+    },
+    {
+      code: "HUMAN_APPROVE_ORIGIN",
+      passed: args.actionOrigin === "HUMAN_APPROVE",
+      message: "DECIDED requires action.origin === HUMAN_APPROVE",
     },
     {
       code: "JUDGE_DRAFT_EXISTS",

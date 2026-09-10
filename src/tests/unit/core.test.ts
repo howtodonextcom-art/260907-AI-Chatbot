@@ -105,16 +105,18 @@ describe("routing", () => {
     expect(r.runJudge).toBe(false);
   });
 
-  it("DEEP FRAME_PROBLEM is Analyst only (not a full council)", () => {
+  it("DEEP FRAME_PROBLEM uses Parallel Blind Framing (not a single-provider council)", () => {
     const r = decideRouting({
       routeMode: "DEEP",
       intent: "FRAME_PROBLEM",
       evidenceCoverage: 0.2,
       importance: "MEDIUM",
     });
-    expect(r.runAnalyst).toBe(true);
+    expect(r.runParallelFraming).toBe(true);
+    expect(r.runAnalyst).toBe(false);
     expect(r.runCritic).toBe(false);
     expect(r.runJudge).toBe(false);
+    expect(r.plan.stages).toContain("PARALLEL_FRAME");
   });
 
   it("DEEP PREPARE is Judge only (no Analyst/Critic/SO rerun)", () => {
@@ -152,8 +154,24 @@ describe("hard policy gate", () => {
       hasJudgeDraft: true,
       domainErrors: [],
       budgetExceeded: false,
+      actionOrigin: "HUMAN_APPROVE",
     });
     expect(gate.passed).toBe(false);
+  });
+
+  it("rejects DECIDED gate without HUMAN_APPROVE origin", () => {
+    const gate = gateDecisionApproval({
+      sessionStatus: "DECISION_READY",
+      approve: true,
+      hasJudgeDraft: true,
+      domainErrors: [],
+      budgetExceeded: false,
+      actionOrigin: "AI_AGENT",
+    });
+    expect(gate.passed).toBe(false);
+    expect(gate.errors.some((e) => e.code === "HUMAN_APPROVE_ORIGIN")).toBe(
+      true
+    );
   });
 
   it("requires approved decision for blueprint", () => {

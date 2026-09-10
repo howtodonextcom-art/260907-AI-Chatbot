@@ -65,7 +65,7 @@ describe("decideWorkflowStage", () => {
     expect(d.nextStage).toBe("OPTIONS");
   });
 
-  it("OPTIONS complete → CRITIQUE", () => {
+  it("OPTIONS complete → VERIFY before CRITIQUE when HIGH assumptions unverified", () => {
     const session = baseSession({
       latestSummary: "Framed",
       options: [
@@ -109,10 +109,62 @@ describe("decideWorkflowStage", () => {
       },
     });
     const d = decideWorkflowStage({ session, routeMode: "DEEP" });
+    expect(d.nextStage).toBe("VERIFY");
+  });
+
+  it("OPTIONS + VERIFY done → CRITIQUE when no HIGH unknowns", () => {
+    const session = baseSession({
+      latestSummary: "Framed",
+      options: [
+        {
+          id: "o1",
+          title: "A",
+          description: "d",
+          pros: [],
+          cons: [],
+          risks: [],
+          evidenceIds: [],
+          status: "PROPOSED",
+          proposedBy: "ANALYST",
+        },
+      ],
+      assumptions: [
+        {
+          id: "a1",
+          statement: "Traders will pay",
+          status: "SUPPORTED",
+          importance: "HIGH",
+          evidenceIds: ["e1"],
+        },
+      ],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "VERIFY",
+        completedStages: ["FRAME", "OPTIONS", "VERIFY"],
+        artifacts: {
+          FRAME: {
+            agentRunIds: ["r1"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+          OPTIONS: {
+            agentRunIds: ["r2"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+          VERIFY: {
+            agentRunIds: [],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const d = decideWorkflowStage({ session, routeMode: "DEEP" });
     expect(d.nextStage).toBe("CRITIQUE");
   });
 
-  it("OPTIONS CURRENT + HIGH OPEN unknown → CRITIQUE (not PAUSED)", () => {
+  it("OPTIONS CURRENT + HIGH OPEN unknown → PAUSED (before CRITIQUE)", () => {
     const session = baseSession({
       latestSummary: "Framed",
       options: [
@@ -156,9 +208,87 @@ describe("decideWorkflowStage", () => {
       },
     });
     const d = decideWorkflowStage({ session, routeMode: "DEEP" });
-    expect(d.nextStage).toBe("CRITIQUE");
-    expect(d.shouldAdvance).toBe(true);
-    expect(d.state).toBe("RUNNING");
+    expect(d.nextStage).toBeNull();
+    expect(d.shouldAdvance).toBe(false);
+    expect(d.state).toBe("PAUSED");
+    expect(d.blockers).toContain("HIGH_UNKNOWNS_OPEN");
+  });
+
+  it("FRAME done + HIGH OPEN unknown → PAUSED before OPTIONS", () => {
+    const session = baseSession({
+      latestSummary: "Multi-provider framing",
+      unknowns: [
+        {
+          id: "u1",
+          question: "Data source?",
+          importance: "HIGH",
+          resolution: "OPEN",
+          evidenceIds: [],
+        },
+      ],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "FRAME",
+        completedStages: ["FRAME"],
+        artifacts: {
+          FRAME: {
+            agentRunIds: ["r1", "r2", "r3"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const d = decideWorkflowStage({ session, routeMode: "DEEP" });
+    expect(d.state).toBe("PAUSED");
+    expect(d.nextStage).toBeNull();
+    expect(d.blockers).toContain("HIGH_UNKNOWNS_OPEN");
+  });
+
+  it("OPTIONS done + no HIGH unknowns → VERIFY before CRITIQUE when assumptions unverified", () => {
+    const session = baseSession({
+      latestSummary: "Framed",
+      options: [
+        {
+          id: "o1",
+          title: "A",
+          description: "d",
+          pros: [],
+          cons: [],
+          risks: [],
+          evidenceIds: [],
+          status: "PROPOSED",
+        },
+      ],
+      assumptions: [
+        {
+          id: "a1",
+          statement: "Historical draws are complete",
+          status: "UNVERIFIED",
+          importance: "HIGH",
+          evidenceIds: [],
+        },
+      ],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "OPTIONS",
+        completedStages: ["FRAME", "OPTIONS"],
+        artifacts: {
+          FRAME: {
+            agentRunIds: ["r1"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+          OPTIONS: {
+            agentRunIds: ["r2"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const d = decideWorkflowStage({ session, routeMode: "DEEP" });
+    expect(d.nextStage).toBe("VERIFY");
   });
 
   it("continue-workflow messages do not invalidate OPTIONS", () => {
@@ -291,7 +421,7 @@ describe("decideWorkflowStage", () => {
     expect(d.nextStage).toBe("PREPARE");
   });
 
-  it("HIGH Unknown → PAUSED after CRITIQUE (not before Groq)", () => {
+  it("HIGH Unknown → PAUSED even after framing/options (human gate)", () => {
     const session = baseSession({
       latestSummary: "Framed",
       options: [
@@ -576,5 +706,62 @@ describe("applyWorkflowProgress", () => {
     });
     expect(second.artifacts.OPTIONS?.agentRunIds).toEqual(["analyst-1", "so-1"]);
     expect(second.artifacts.OPTIONS?.contributions?.secondOpinion).toBe(true);
+  });
+
+  it("retains VERIFY/PAUSED when 1 of 2 HIGH unknowns is resolved (V3)", () => {
+    const session = baseSession({
+      latestSummary: "Parallel framing done",
+      status: "VALIDATING",
+      unknowns: [
+        {
+          id: "u1",
+          question: "Upload MT4 or API?",
+          importance: "HIGH",
+          resolution: "RESOLVED",
+          evidenceIds: ["e1"],
+          resolutionNote: "API",
+        },
+        {
+          id: "u2",
+          question: "What sample size is enough?",
+          importance: "HIGH",
+          resolution: "OPEN",
+          evidenceIds: [],
+        },
+      ],
+      assumptions: [
+        {
+          id: "a1",
+          statement: "Draws are complete",
+          status: "UNVERIFIED",
+          importance: "HIGH",
+          evidenceIds: [],
+        },
+      ],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "VERIFY",
+        completedStages: ["FRAME"],
+        artifacts: {
+          FRAME: {
+            agentRunIds: ["r1", "r2"],
+            status: "CURRENT",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const d = decideWorkflowStage({ session, routeMode: "DEEP" });
+    // One HIGH still OPEN → must NOT advance to OPTIONS/CRITIQUE.
+    expect(d.nextStage).not.toBe("OPTIONS");
+    expect(d.nextStage).not.toBe("CRITIQUE");
+    expect(d.nextStage).not.toBe("PREPARE");
+    expect(["VERIFY", null]).toContain(d.nextStage);
+    if (d.nextStage === null) {
+      expect(d.state).toBe("PAUSED");
+      expect(d.blockers).toContain("HIGH_UNKNOWNS_OPEN");
+    } else {
+      expect(d.nextStage).toBe("VERIFY");
+    }
   });
 });

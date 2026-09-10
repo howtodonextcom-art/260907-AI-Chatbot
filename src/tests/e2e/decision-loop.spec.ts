@@ -37,7 +37,9 @@ test.describe("full decision loop", () => {
     await page.getByTestId("route-mode").selectOption("DEEP");
     await expect(page.getByTestId("workflow-stepper")).toBeVisible();
     await expect(page.getByTestId("deep-stage-hint")).toBeVisible();
-    await expect(page.getByTestId("deep-stage-hint")).toContainText(/Analyst \(Gemini\)|CRITIQUE|Groq/);
+    await expect(page.getByTestId("deep-stage-hint")).toContainText(
+      /Parallel Blind Framing|VERIFY|Human Approve/i
+    );
     await expect(page.getByTestId("intent-select")).toBeHidden();
 
     await page.getByTestId("composer").fill(

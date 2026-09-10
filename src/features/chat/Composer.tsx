@@ -5,7 +5,7 @@ import type { RouteMode } from "@/domain/decision/types";
 const FOOTER_BY_MODE: Record<RouteMode, string> = {
   QUICK: "QUICK: một lần gọi nhẹ",
   STANDARD: "STANDARD: quy trình đầy đủ (Analyst theo giai đoạn) · PREPARE = Judge quyết định",
-  DEEP: "DEEP: Gửi = 1 giai đoạn · Bắt đầu phân tích = cả pipeline. OPTIONS = DeepSeek. Sau OPTIONS luôn tới CRITIQUE (Groq), kể cả khi còn Unknown HIGH.",
+  DEEP: "DEEP: Gửi = 1 giai đoạn · Bắt đầu phân tích = cả pipeline. FRAME = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). HIGH Unknown pause trước OPTIONS. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.",
 };
 
 export function Composer(props: {

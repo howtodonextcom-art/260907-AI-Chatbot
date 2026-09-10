@@ -1,4 +1,7 @@
-import type { DecisionSessionStatus } from "@/domain/decision/types";
+import type {
+  DecisionSessionStatus,
+  StatusTransitionAction,
+} from "@/domain/decision/types";
 
 const ALLOWED: Record<DecisionSessionStatus, DecisionSessionStatus[]> = {
   DISCOVERY: ["VALIDATING", "ARCHIVED"],
@@ -80,17 +83,28 @@ export interface GatedTransitionResult {
 export function gateStatusTransition(
   current: DecisionSessionStatus,
   proposed: DecisionSessionStatus,
-  ctx: GatedTransitionContext
+  ctx: GatedTransitionContext,
+  action: StatusTransitionAction = { origin: "SYSTEM" }
 ): GatedTransitionResult {
   if (proposed === current) {
     return { status: current, applied: false };
   }
   if (proposed === "DECIDED") {
+    if (action.origin === "HUMAN_APPROVE" && action.approve === true) {
+      if (!canTransition(current, proposed)) {
+        return {
+          status: current,
+          applied: false,
+          reason: `Illegal transition ${current} → ${proposed}`,
+        };
+      }
+      return { status: proposed, applied: true };
+    }
     return {
       status: current,
       applied: false,
       reason:
-        "DECIDED can only be assigned by approveDecision() after HardPolicyGate — not via a proposed transition",
+        "DECIDED requires action.origin=HUMAN_APPROVE and explicit approve=true",
     };
   }
   if (!canTransition(current, proposed)) {

@@ -8,6 +8,17 @@ export type DecisionSessionStatus =
   | "DECIDED"
   | "ARCHIVED";
 
+export type StatusTransitionOrigin =
+  | "AI_AGENT"
+  | "SYSTEM"
+  | "USER_PATCH"
+  | "HUMAN_APPROVE";
+
+export interface StatusTransitionAction {
+  origin: StatusTransitionOrigin;
+  approve?: boolean;
+}
+
 export type EvidenceType =
   | "SOURCE_CODE"
   | "OFFICIAL_DOCUMENTATION"
@@ -149,6 +160,7 @@ export type WorkflowArtifactStatus = "CURRENT" | "STALE";
 
 export type WorkflowBlockerCode =
   | "HIGH_UNKNOWNS_OPEN"
+  | "UNVERIFIED_ASSUMPTIONS"
   | "EXPERIMENT_REQUIRED"
   | "HUMAN_DECISION_REQUIRED"
   | "EVIDENCE_CONTRADICTION"
@@ -173,6 +185,84 @@ export interface WorkflowStageArtifact {
     /** True when DeepSeek SecondOpinion completed for CURRENT OPTIONS. */
     secondOpinion?: boolean;
   };
+}
+
+export interface IndependentFrame {
+  provider: "gemini" | "groq" | "deepseek";
+  runId?: string;
+  reply: string;
+  problemFraming?: string;
+  /** Optional human-readable stance label for ConflictMap UI. */
+  perspectiveName?: string;
+  assumptions: Array<{
+    statement: string;
+    importance: "LOW" | "MEDIUM" | "HIGH";
+    status: "UNVERIFIED" | "SUPPORTED" | "CONTRADICTED" | "ACCEPTED_FOR_NOW";
+  }>;
+  unknowns: Array<{
+    question: string;
+    importance: "LOW" | "MEDIUM" | "HIGH";
+    resolution:
+      | "OPEN"
+      | "VERIFY_NOW"
+      | "EXPERIMENT_REQUIRED"
+      | "HUMAN_DECISION_REQUIRED"
+      | "RESOLVED"
+      | "HUMAN_DECISION"
+      | "ACCEPTED_RISK";
+  }>;
+  constraints: Array<{ statement: string }>;
+  proposedOptions?: Array<{
+    title: string;
+    description: string;
+    pros: string[];
+    cons: string[];
+    risks: string[];
+  }>;
+}
+
+/** Alias used by Parallel Blind Framing API / docs. */
+export type AgentFrameOutput = IndependentFrame;
+
+export interface ConflictViewpoint {
+  provider: string;
+  stance: string;
+}
+
+export interface ConflictTopic {
+  topic: string;
+  viewpoints: ConflictViewpoint[];
+}
+
+/**
+ * ConflictMap is the Canvas-facing view of FrameConflictReport.
+ * `coreDisagreements` carries structured multi-provider stances.
+ */
+export interface ConflictMap {
+  coreDisagreements: ConflictTopic[];
+}
+
+export interface FrameConflictReport {
+  providerCount: number;
+  /** Flattened labels for debate notes / chips. */
+  coreDisagreements: string[];
+  /** Structured map for Decision Canvas (Illusion-of-council antidote). */
+  conflictMap: ConflictMap;
+  assumptionDisagreements: string[];
+  unknownDisagreements: string[];
+  perspectives: Array<{
+    provider: "gemini" | "groq" | "deepseek";
+    framing?: string;
+    perspectiveName?: string;
+    assumptionCount: number;
+    unknownCount: number;
+  }>;
+  generatedAt: ISODateTime;
+}
+
+export interface ParallelFramingSnapshot {
+  frames: IndependentFrame[];
+  conflictReport: FrameConflictReport;
 }
 
 /** Canonical disagreement substrate for Canvas — not chat prose. */
@@ -214,6 +304,7 @@ export interface WorkflowMetadata {
     outputTokens: number;
     costUsd: number;
   };
+  framing?: ParallelFramingSnapshot;
   debateNotes?: DebateNotes;
   lastRun?: WorkflowLastRun;
   invalidatedFromStage?: WorkflowStage;
