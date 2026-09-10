@@ -20,4 +20,5 @@ export type ToolPermission = "READ" | "WRITE" | "EXECUTE";
 
 export const TOOL_ACTION_PERMISSIONS: Record<string, ToolPermission> = {
   "calculator.evaluate": "READ",
+  "stats.describe": "READ",
 };

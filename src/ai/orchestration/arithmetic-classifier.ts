@@ -79,7 +79,7 @@ export function findArithmeticCandidate(text: string): ArithmeticCandidate | nul
  */
 export function computeCoverage(
   originalClaim: string,
-  candidate: ArithmeticCandidate
+  candidate: { verifiedFragment: string }
 ): VerificationCoverage {
   const trimmedLen = originalClaim.trim().length;
   if (trimmedLen === 0) return "NONE";

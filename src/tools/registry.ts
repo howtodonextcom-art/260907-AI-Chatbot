@@ -26,8 +26,55 @@ const CalculatorConnector: ToolConnector = {
   },
 };
 
+const StatsConnector: ToolConnector = {
+  id: "stats",
+  name: "Descriptive statistics",
+  capabilities: ["describe"],
+  async execute(action, input) {
+    if (action !== "describe") {
+      return { success: false, error: `Unknown action: ${action}` };
+    }
+    const values = (input as { values?: unknown }).values;
+    if (
+      !Array.isArray(values) ||
+      values.length < 2 ||
+      !values.every((v) => typeof v === "number" && Number.isFinite(v))
+    ) {
+      return {
+        success: false,
+        error: "values must be an array of at least 2 finite numbers",
+      };
+    }
+    const nums = values as number[];
+    const count = nums.length;
+    const sum = nums.reduce((a, b) => a + b, 0);
+    const mean = sum / count;
+    const sumSquaredDiff = nums.reduce((a, v) => a + (v - mean) ** 2, 0);
+    // Report both conventions rather than guessing whether the caller's
+    // dataset is a full population or a sample — a wrong denominator choice
+    // silently mislabeled as "the" standard deviation would be exactly the
+    // kind of overclaim this tool must not make.
+    const populationStdev = Math.sqrt(sumSquaredDiff / count);
+    const sampleStdev =
+      count > 1 ? Math.sqrt(sumSquaredDiff / (count - 1)) : null;
+    return {
+      success: true,
+      output: {
+        count,
+        sum,
+        mean,
+        min: Math.min(...nums),
+        max: Math.max(...nums),
+        populationStdev,
+        sampleStdev,
+      } as never,
+    };
+  },
+};
+
 const CONNECTORS: Record<string, ToolConnector> = {
   calculator: CalculatorConnector,
+  stats: StatsConnector,
 };
 
 export function getToolConnector(id: string): ToolConnector {

@@ -116,7 +116,7 @@ export const GENERIC_DECISION_WORKFLOW: DomainPack = {
   },
 
   getToolConnectorIds() {
-    return ["calculator"];
+    return ["calculator", "stats"];
   },
 
   getEvaluationSuiteId() {

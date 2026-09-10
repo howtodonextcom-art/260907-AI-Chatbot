@@ -8,6 +8,7 @@ import {
   computeCoverage,
   findArithmeticCandidate,
 } from "@/ai/orchestration/arithmetic-classifier";
+import { findStatsCandidate } from "@/ai/orchestration/stats-classifier";
 
 export interface VerifySseEvent {
   event: "tool.started" | "tool.completed" | "run.partial";
@@ -33,7 +34,7 @@ export async function runVerifyPipeline(args: {
   const unknowns = args.session.unknowns.map((u) => ({ ...u }));
   const now = new Date().toISOString();
 
-  if (!allowed.has("calculator")) {
+  if (!allowed.has("calculator") && !allowed.has("stats")) {
     events.push({
       event: "run.partial",
       data: {
@@ -68,7 +69,109 @@ export async function runVerifyPipeline(args: {
   ];
 
   let verified = 0;
+
+  /** Shared attach/status-flip logic for any tool-produced evidence item. */
+  function attachEvidence(
+    claim: { kind: "assumption" | "unknown"; id: string },
+    item: EvidenceItem,
+    coverage: "NONE" | "PARTIAL" | "FULL"
+  ): void {
+    created.push(item);
+    verified += 1;
+    // Only a FULL-coverage result may flip status: a PARTIAL result (e.g.
+    // one clause of a compound claim) still attaches as evidence but must
+    // not be reported as having verified the whole proposition — §17-19.
+    if (claim.kind === "assumption") {
+      const target = assumptions.find((a) => a.id === claim.id);
+      if (target) {
+        target.evidenceIds = [...target.evidenceIds, item.id];
+        if (coverage === "FULL") target.status = "SUPPORTED";
+      }
+    } else {
+      const target = unknowns.find((u) => u.id === claim.id);
+      if (target) {
+        target.evidenceIds = [...target.evidenceIds, item.id];
+        if (coverage === "FULL") target.resolution = "RESOLVED";
+      }
+    }
+  }
+
   for (const claim of claims) {
+    if (allowed.has("stats")) {
+      const statsCandidate = findStatsCandidate(claim.text);
+      if (statsCandidate) {
+        events.push({
+          event: "tool.started",
+          data: {
+            connectorId: "stats",
+            action: "describe",
+            claimId: claim.id,
+          },
+        });
+        try {
+          assertToolAllowed("stats", "describe");
+          const connector = getToolConnector("stats");
+          const result = await connector.execute("describe", {
+            values: statsCandidate.values,
+          });
+          events.push({
+            event: "tool.completed",
+            data: {
+              connectorId: "stats",
+              action: "describe",
+              success: result.success,
+              output: result.output,
+              error: result.error,
+            },
+          });
+          if (result.success) {
+            const trust = toolCalculationDefaults();
+            const coverage = computeCoverage(claim.text, {
+              verifiedFragment: statsCandidate.verifiedFragment,
+            });
+            const summary = JSON.stringify(result.output);
+            const item: EvidenceItem = {
+              id: uuidv4(),
+              workspaceId: args.session.workspaceId,
+              sessionId: args.session.id,
+              ownerId: args.ownerId,
+              type: "CALCULATION",
+              claim: `stats.describe(${statsCandidate.values.join(",")}) = ${summary}`,
+              source: "stats.describe",
+              reliability: trust.reliability,
+              createdBy: trust.createdBy,
+              supportsOptionIds: [],
+              contradictsOptionIds: [],
+              supportsAssumptionIds:
+                claim.kind === "assumption" ? [claim.id] : [],
+              supportsUnknownIds: claim.kind === "unknown" ? [claim.id] : [],
+              verificationStatus: trust.verificationStatus,
+              verifiedBy: trust.verifiedBy,
+              verifiedAt: now,
+              verificationMethod: "stats.describe",
+              originalClaim: claim.text,
+              verifiedFragment: statsCandidate.verifiedFragment,
+              verificationCoverage: coverage,
+              metadata: { values: statsCandidate.values, ...(result.output as object) },
+              createdAt: now,
+            };
+            attachEvidence(claim, item, coverage);
+          }
+        } catch (error) {
+          events.push({
+            event: "tool.completed",
+            data: {
+              connectorId: "stats",
+              action: "describe",
+              success: false,
+              error: error instanceof Error ? error.message : "tool failed",
+            },
+          });
+        }
+      }
+    }
+
+    if (!allowed.has("calculator")) continue;
     // Classify BEFORE extraction: "MT4/MT5", "H264/H265", "v1/v2" etc. must
     // never reach the calculator as if they were division — see
     // arithmetic-classifier.ts and CLAUDE.md [[ftmo-verify-classifier]].
@@ -129,30 +232,7 @@ export async function runVerifyPipeline(args: {
         metadata: { expression, value },
         createdAt: now,
       };
-      created.push(item);
-      verified += 1;
-
-      // Only a FULL-coverage calculation may flip status: a PARTIAL
-      // calculation (e.g. "20 x 15" inside a compound claim about MRR and
-      // adoption) still attaches as evidence but must not be reported as
-      // having verified the whole proposition — see §17-19.
-      if (claim.kind === "assumption") {
-        const target = assumptions.find((a) => a.id === claim.id);
-        if (target) {
-          target.evidenceIds = [...target.evidenceIds, item.id];
-          if (coverage === "FULL") {
-            target.status = "SUPPORTED";
-          }
-        }
-      } else {
-        const target = unknowns.find((u) => u.id === claim.id);
-        if (target) {
-          target.evidenceIds = [...target.evidenceIds, item.id];
-          if (coverage === "FULL") {
-            target.resolution = "RESOLVED";
-          }
-        }
-      }
+      attachEvidence(claim, item, coverage);
     } catch (error) {
       events.push({
         event: "tool.completed",

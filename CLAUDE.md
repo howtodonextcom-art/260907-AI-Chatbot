@@ -467,3 +467,61 @@ theo yêu cầu audit này):**
   an toàn 8 bước) — viết lại đúng hành vi.
 - Thêm mục hướng dẫn Vercel-specific cho Firebase Admin (3 biến inline) vào
   phần "Connected mode (Firestore)".
+
+## Nâng cấp năng lực: [[verify-stats-tool]] (2026-09-10)
+
+**Nguồn:** user phản ánh trực tiếp trên một session THẬT (project
+"AI-Research-Lab" — phân tích thống kê dự đoán xổ số Mega 6/45): "thuật
+toán quá đơn giản, chưa giải quyết được vấn đề". Trước khi đề xuất bất kỳ
+nâng cấp nào, đã CHẨN ĐOÁN lại theo đúng bằng chứng — KHÔNG lặp lại tranh
+luận "model bị giới hạn/đối xử bất công" đã audit kỹ và bác bỏ ở
+[[layer-a-multiagent-audit]] (2026-09-10 sớm hơn cùng ngày). Tìm ra khoảng
+trống THẬT, khác hẳn: toàn bộ `src/tools/registry.ts` (dùng chung cho MỌI
+DomainPack) trước đây chỉ có DUY NHẤT một connector — `calculator`, chỉ
+eval được biểu thức số học đơn giản khớp `/^[\d\s+\-*/().]+$/`. Với một dự
+án cần phân tích dữ liệu/thống kê thật (vd. kiểm tra tính đồng đều của tần
+suất xổ số), hệ thống hoàn toàn không có công cụ nào — Analyst/Critic/Judge
+chỉ có thể TRANH LUẬN VỀ việc cần phân tích thống kê, không thể THẬT SỰ
+tính toán gì. Đây là khoảng trống ở tầng tool/VERIFY, không phải ở tầng
+thiết kế đa tác tử.
+
+**Nâng cấp (phạm vi hẹp, có chủ đích):**
+- `src/tools/registry.ts` — thêm `StatsConnector` (`stats.describe`): tính
+  count/sum/mean/min/max/**cả** populationStdev **và** sampleStdev (không
+  đoán bừa mẫu số n hay n-1 — báo cả hai, tránh đúng kiểu "overclaim ngầm"
+  mà hệ thống này đã có nguyên tắc chống từ trước). READ-only, thêm vào
+  `TOOL_ACTION_PERMISSIONS`.
+- `src/ai/orchestration/stats-classifier.ts` (mới) — `findStatsCandidate()`
+  CHỈ nhận diện tag tường minh `DATA=[n1, n2, ...]` (≥2 số), KHÔNG parse
+  tự do câu tiếng Việt/Anh tự nhiên tìm số. Đây là quyết định an toàn có
+  chủ đích: lặp lại việc parse tự do (kiểu regex cũ của arithmetic-classifier
+  trước khi có fix HIGH-02, xem [[ftmo-verify-classifier]]) sẽ tái tạo đúng
+  lớp lỗi false-positive-verification đã tốn cả một chu kỳ fix để sửa. Tag
+  tường minh nghĩa là không câu văn tự nhiên nào vô tình khớp — an toàn
+  tuyệt đối, đổi lại UX kém tự nhiên hơn (chấp nhận được, vì evidence sai
+  còn tệ hơn nhiều so với evidence không tự động sinh ra).
+- `verify-pipeline.ts` — refactor phần gán evidence/lật status
+  (assumption→SUPPORTED, unknown→RESOLVED khi coverage FULL) thành hàm dùng
+  chung `attachEvidence()` cho cả `calculator` và `stats`, tránh lặp code.
+  Early-return `NOT_VERIFIABLE` giờ chỉ kích hoạt khi domain pack không cho
+  phép CẢ HAI tool (trước đây chỉ kiểm tra `calculator`, nên một pack chỉ
+  bật `stats` sẽ bị chặn nhầm ngay từ đầu).
+- `src/domain-packs/generic.ts::getToolConnectorIds()` — thêm `"stats"` vào
+  allowlist mặc định. `challengeready` pack giữ nguyên (không cần thay đổi
+  ngoài phạm vi khiếu nại).
+
+**Test:** `src/tests/unit/stats-classifier.test.ts` (7 test — bao gồm
+đúng kiểu false-positive từng gây lỗi ở arithmetic: "MT4/MT5, v1/v2, 4K/8K"
+không kích hoạt); `src/tests/unit/tools-registry.test.ts` (6 test — đối
+chiếu với ví dụ thống kê chuẩn sách giáo khoa: dataset `[2,4,4,4,5,5,7,9]`
+→ populationStdev=2 chính xác); `verify-pipeline.test.ts` (+4 test — FULL
+coverage tự RESOLVED unknown, PARTIAL không tự SUPPORTED assumption, tool
+bị chặn đúng khi domain pack không cho phép).
+
+**Không làm (có chủ đích, tránh overreach):** không tính p-value/chi-square
+significance test (rủi ro sai số xấp xỉ, dễ overclaim "có ý nghĩa thống
+kê" khi công thức gần đúng sai) — chỉ trả thống kê mô tả thô, để
+Analyst/Judge tự diễn giải, không tự động gán nhãn "significant"/"not
+significant". Không tạo DomainPack mới riêng cho "nghiên cứu/data science"
+— thêm `stats` vào Generic pack sẵn có là đủ cho khoảng trống tìm được,
+tạo pack mới sẽ là mở rộng phạm vi không có bằng chứng yêu cầu.

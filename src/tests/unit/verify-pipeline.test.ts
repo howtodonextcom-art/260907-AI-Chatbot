@@ -130,4 +130,75 @@ describe("VERIFY pipeline", () => {
     expect(result.stopReason).toBe("NOT_VERIFIABLE");
     expect(result.evidence).toHaveLength(0);
   });
+
+  it("runs stats.describe on a DATA=[...] unknown and marks it RESOLVED at FULL coverage", async () => {
+    const result = await runVerifyPipeline({
+      session: session({
+        assumptions: [],
+        unknowns: [
+          {
+            id: "u1",
+            question: "DATA=[10,20,10,30,20,10]",
+            importance: "HIGH",
+            resolution: "OPEN",
+            evidenceIds: [],
+          },
+        ],
+      }),
+      ownerId: "u1",
+      domainPack: GENERIC_DECISION_WORKFLOW,
+    });
+    expect(result.evidence).toHaveLength(1);
+    expect(result.evidence[0].source).toBe("stats.describe");
+    expect(result.evidence[0].verificationStatus).toBe("VERIFIED");
+    expect(result.evidence[0].verificationCoverage).toBe("FULL");
+    expect(result.sessionPatch.unknowns?.[0].resolution).toBe("RESOLVED");
+  });
+
+  it("attaches stats evidence to a compound claim but does not auto-SUPPORT it (PARTIAL coverage)", async () => {
+    const result = await runVerifyPipeline({
+      session: session({
+        assumptions: [
+          {
+            id: "a1",
+            statement:
+              "Lottery draws should be uniform across numbers: DATA=[4,6,5,5,4,6,5] and users will trust the app more once we show this",
+            status: "UNVERIFIED",
+            importance: "HIGH",
+            evidenceIds: [],
+          },
+        ],
+      }),
+      ownerId: "u1",
+      domainPack: GENERIC_DECISION_WORKFLOW,
+    });
+    expect(result.evidence).toHaveLength(1);
+    expect(result.evidence[0].verificationCoverage).toBe("PARTIAL");
+    expect(result.sessionPatch.assumptions?.[0].status).toBe("UNVERIFIED");
+  });
+
+  it("does not invoke stats when the DomainPack does not allow it", async () => {
+    const pack = {
+      ...GENERIC_DECISION_WORKFLOW,
+      getToolConnectorIds: () => ["calculator"],
+    };
+    const result = await runVerifyPipeline({
+      session: session({
+        assumptions: [],
+        unknowns: [
+          {
+            id: "u1",
+            question: "DATA=[1,2,3,4]",
+            importance: "HIGH",
+            resolution: "OPEN",
+            evidenceIds: [],
+          },
+        ],
+      }),
+      ownerId: "u1",
+      domainPack: pack,
+    });
+    expect(result.evidence).toHaveLength(0);
+    expect(result.sessionPatch.unknowns?.[0].resolution).toBe("OPEN");
+  });
 });

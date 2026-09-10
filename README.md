@@ -33,7 +33,7 @@ Runtime truth lives in `src/`. Agent operating rules: [`CLAUDE.md`](CLAUDE.md). 
 | QUICK | (single call) | Analyst (Groq) only |
 | STANDARD | FRAME / OPTIONS / CRITIQUE | Analyst (Gemini) only |
 | STANDARD | PREPARE | Judge (Gemini) only, using the session's prior artifacts |
-| any | VERIFY | Allowlisted tools only (today: calculator via DomainPack) — not an LLM council |
+| any | VERIFY | Allowlisted tools only (today: `calculator` for arithmetic expressions, `stats` for descriptive statistics on a `DATA=[...]` tagged dataset — both via DomainPack) — not an LLM council |
 | DEEP | DISCUSS / FRAME | Analyst (+ Critic if the framing is high-impact/ambiguous) |
 | DEEP | OPTIONS | Analyst ∥ SecondOpinion (DeepSeek), genuinely parallel and blind to each other |
 | DEEP | CRITIQUE | Critic (Groq) + conditional SecondOpinion re-engagement |
@@ -116,7 +116,7 @@ pnpm build
 
 ## Honest limitations
 
-- **VERIFY** is an allowlisted tool pipeline (calculator expressions found in assumption/unknown text), not web-scale fact checking. User-supplied evidence cannot self-upgrade to `VERIFIED` / `HIGH`.
+- **VERIFY** is an allowlisted tool pipeline — `calculator` for arithmetic found in assumption/unknown text, and `stats` for descriptive statistics (count/mean/min/max/population & sample stdev) on a numeric dataset — but only when explicitly tagged `DATA=[n1, n2, ...]` in the claim text. That explicit tag is deliberate: it is not free-text data extraction, specifically to avoid the false-positive-verification failure mode already hit once with loose arithmetic parsing (see CLAUDE.md `[[ftmo-verify-classifier]]`). Neither tool is web-scale fact checking or real data fetching, and user-supplied evidence cannot self-upgrade to `VERIFIED` / `HIGH`.
 - **DECISION_READY** stays blocked while any HIGH-importance unknown remains `OPEN` — even if JudgeDraft already exists in session JSON.
 - **In-memory mode** is for local/offline loops; it does not prove Firestore production persistence.
 - This is **decision support / training tooling**, not financial, legal, or investment advice.
