@@ -65,23 +65,41 @@ export class FirestoreDecisionSessionRepository
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
+  /**
+   * Transactional read-modify-write. The orchestrator's SSE stream and any
+   * concurrent client PATCH (e.g. UnknownsPanel resolve) can both target the
+   * same session doc; the previous get()-then-set() had no isolation, so a
+   * slow request's stale read could silently clobber a faster request's
+   * write. runTransaction() reads and writes inside one Firestore
+   * transaction, which auto-retries on conflicting concurrent writes instead
+   * of losing one. See CLAUDE.md [[firestore-atomic-writes]].
+   */
   async update(
     workspaceId: string,
     sessionId: string,
     ownerId: string,
     patch: Partial<DecisionSession>
   ): Promise<DecisionSession> {
-    const existing = await this.getById(workspaceId, sessionId, ownerId);
-    if (!existing) throw new AppError("NOT_FOUND", "Session not found", 404);
-    const updated: DecisionSession = {
-      ...existing,
-      ...patch,
-      id: existing.id,
-      workspaceId: existing.workspaceId,
-      ownerId: existing.ownerId,
-      updatedAt: new Date().toISOString(),
-    };
-    await this.col(workspaceId).doc(sessionId).set(updated);
-    return updated;
+    const ref = this.col(workspaceId).doc(sessionId);
+    return getAdminDb().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new AppError("NOT_FOUND", "Session not found", 404);
+      }
+      const existing = { ...(snap.data() as DecisionSession), id: snap.id };
+      if (existing.ownerId !== ownerId) {
+        throw new AppError("NOT_FOUND", "Session not found", 404);
+      }
+      const updated: DecisionSession = {
+        ...existing,
+        ...patch,
+        id: existing.id,
+        workspaceId: existing.workspaceId,
+        ownerId: existing.ownerId,
+        updatedAt: new Date().toISOString(),
+      };
+      tx.set(ref, updated);
+      return updated;
+    });
   }
 }

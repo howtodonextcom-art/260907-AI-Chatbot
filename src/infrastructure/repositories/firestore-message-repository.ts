@@ -90,6 +90,10 @@ export class FirestoreAgentRunRepository implements AgentRunRepository {
     return run;
   }
 
+  /** Transactional — see CLAUDE.md [[firestore-atomic-writes]]. The
+   * orchestrator issues several AgentRun.update() calls per run and the
+   * client can poll /runs concurrently; unguarded get-then-set here had the
+   * same lost-update risk as the session repository. */
   async update(
     workspaceId: string,
     sessionId: string,
@@ -97,14 +101,22 @@ export class FirestoreAgentRunRepository implements AgentRunRepository {
     ownerId: string,
     patch: Partial<AgentRun>
   ): Promise<AgentRun> {
-    const existing = await this.getById(workspaceId, sessionId, runId, ownerId);
-    if (!existing) throw new AppError("NOT_FOUND", "AgentRun not found", 404);
-    const updated = { ...existing, ...patch, id: existing.id };
-    await sessionPath(workspaceId, sessionId)
+    const ref = sessionPath(workspaceId, sessionId)
       .collection("agentRuns")
-      .doc(runId)
-      .set(updated);
-    return updated;
+      .doc(runId);
+    return getAdminDb().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new AppError("NOT_FOUND", "AgentRun not found", 404);
+      }
+      const existing = { ...(snap.data() as AgentRun), id: snap.id };
+      if (existing.ownerId !== ownerId) {
+        throw new AppError("NOT_FOUND", "AgentRun not found", 404);
+      }
+      const updated = { ...existing, ...patch, id: existing.id };
+      tx.set(ref, updated);
+      return updated;
+    });
   }
 
   async listBySession(

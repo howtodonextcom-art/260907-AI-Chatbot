@@ -525,3 +525,78 @@ Analyst/Judge tự diễn giải, không tự động gán nhãn "significant"/"
 significant". Không tạo DomainPack mới riêng cho "nghiên cứu/data science"
 — thêm `stats` vào Generic pack sẵn có là đủ cho khoảng trống tìm được,
 tạo pack mới sẽ là mở rộng phạm vi không có bằng chứng yêu cầu.
+
+## Nợ kỹ thuật: [[firestore-atomic-writes]] (2026-09-10)
+
+**Yêu cầu ban đầu:** "eradicate Firestore race conditions" bằng cách
+chuyển toàn bộ dữ liệu chat/session tạm thời sang memory store, chỉ giữ
+Firestore cho DecisionRecord/Blueprint.
+
+**Chẩn đoán trước khi sửa:** app này deploy trên Vercel serverless
+(`vercel.json`, region `iad1`) — mỗi request có thể rơi vào một container
+khác nhau/cold start khác nhau. `getMemoryDb()`
+(`infrastructure/repositories/memory-store.ts`) là một `Map` gắn vào
+`globalThis` của MỘT process — không sống sót qua cold start, không chia
+sẻ giữa các instance. `getServerEnv()` đã chủ động fail-closed cấm
+`USE_MEMORY_STORE=true` khi `NODE_ENV=production` chính vì lý do này.
+Nếu làm đúng y yêu cầu gốc (chuyển toàn bộ DecisionSession/Message/
+AgentRun sang memory), workspace/session/chat của người dùng thật sẽ biến
+mất ngẫu nhiên mỗi khi request rơi vào container khác — không phải fix
+race condition, mà là một regression hỏng dữ liệu mới, nghiêm trọng hơn
+bug gốc. Đã hỏi lại người dùng trước khi code (xem "STRICT_RULES #1" của
+chính yêu cầu — chỉ hỏi khi thực sự bị block) và được xác nhận: giữ
+Firestore làm nguồn sự thật, sửa đúng cơ chế ghi.
+
+**Root cause thật:** không phải "Firestore sai loại store", mà là pattern
+ghi KHÔNG NGUYÊN TỬ lặp lại ở nhiều repository — `get()` (đọc), merge
+field trong JS, rồi `set()` (ghi) — ba round-trip tách rời, không transaction.
+Hai request đồng thời cùng PATCH một document (vd. orchestrator SSE đang
+ghi `workflow` trong khi client PATCH `unknowns` qua UnknownsPanel) có thể
+đọc cùng một bản snapshot cũ, và request ghi sau sẽ ghi đè mất patch của
+request ghi trước (lost update) — đây chính là "race condition" thật sự
+cần eradicate.
+
+**Fix (phạm vi hẹp — chỉ các method có pattern get-then-set):**
+- `FirestoreDecisionSessionRepository.update()`
+- `FirestoreAgentRunRepository.update()`
+- `FirestoreBlueprintRepository.updateStatus()`
+- `FirestoreExperimentRepository.update()`
+- `FirestoreWorkspaceRepository.update()`
+
+Mỗi method đổi sang `getAdminDb().runTransaction(async (tx) => { const
+snap = await tx.get(ref); ...; tx.set(ref, updated); return updated; })`.
+Firestore transaction đọc-và-ghi trong cùng một transaction, tự động
+retry khi phát hiện document đã đổi giữa lúc đọc và lúc commit — loại bỏ
+lost-update mà không cần đổi loại store, không ảnh hưởng tính bền vững
+trên serverless. Giữ nguyên logic merge/field/semantics NOT_FOUND cũ 1:1
+— không refactor thêm gì ngoài phạm vi này (vd. `Experiment.getById()`
+vốn không check `ownerId`, giữ nguyên không thêm check mới). `create()`,
+`Message`/`Evidence`/`DecisionRecord` (chỉ tạo doc mới, không đọc-sửa) và
+`FirestoreIdempotencyStore`/`FirestoreRateLimitStore` (đã atomic sẵn qua
+`create()`/`runTransaction()` từ trước) không đụng tới.
+
+**Verify (không tin test giả):**
+1. `pnpm typecheck` — pass. `pnpm test` — 198/198 test cũ vẫn pass
+   nguyên (test suite chạy trên memory store nên không tự động phủ được
+   code path Firestore mới — không đủ để chứng minh fix đúng).
+2. Viết script độc lập chạy trực tiếp trên Firestore emulator thật
+   (`firebase emulators:exec --only firestore`), mô phỏng lại NGUYÊN VĂN
+   pattern cũ (get-then-set) và pattern mới (runTransaction) trên cùng
+   một document, bắn 2 write đồng thời vào 2 field khác nhau, lặp 20 lần:
+   pattern cũ mất 20/40 write đồng thời (chứng minh race có thật); pattern
+   mới mất 0/40 (chứng minh fix loại bỏ đúng race).
+3. `pnpm test:rules` (Firestore security rules, cũng chạy trên emulator) —
+   14/14 pass, không bị ảnh hưởng.
+4. Browser MCP trên dev server thật đang nối Firestore project thật
+   (`USE_MEMORY_STORE=false`, xác nhận qua `.env.local`): tạo tài khoản
+   Firebase Auth thật, tạo workspace + session thật, gửi 2 lượt chat liên
+   tiếp ở Mode QUICK (route qua Groq) — cả 2 lần `/api/sessions/:id/run`
+   trả 200, Analyst trả lời thật, `workflow.currentStage` cập nhật đúng
+   (FRAME), 0 lỗi console ngoài 404 favicon có sẵn từ trước (không liên
+   quan tới thay đổi này).
+
+**Không làm (có chủ đích):** không thêm Vercel KV/Redis hay store thứ hai
+— không cần thiết cho root cause thật (ghi không nguyên tử), sẽ là hạ
+tầng mới không có bằng chứng yêu cầu. Không sửa `memory-store.ts` (chỉ
+dùng cho dev/test, không có race đáng kể trong ngữ cảnh single-process
+test hiện tại, và nằm ngoài phạm vi "Firestore race condition").

@@ -31,23 +31,33 @@ export class FirestoreWorkspaceRepository implements WorkspaceRepository {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
+  /** Transactional — see CLAUDE.md [[firestore-atomic-writes]]. */
   async update(
     id: string,
     ownerId: string,
     patch: Partial<Pick<Workspace, "name" | "description" | "status">>
   ): Promise<Workspace> {
-    const existing = await this.getById(id, ownerId);
-    if (!existing) throw new AppError("NOT_FOUND", "Workspace not found", 404);
-    const updated: Workspace = {
-      ...existing,
-      ...patch,
-      updatedAt: new Date().toISOString(),
-      archivedAt:
-        patch.status === "ARCHIVED"
-          ? new Date().toISOString()
-          : existing.archivedAt,
-    };
-    await this.col().doc(id).set(updated);
-    return updated;
+    const ref = this.col().doc(id);
+    return getAdminDb().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new AppError("NOT_FOUND", "Workspace not found", 404);
+      }
+      const existing = { ...(snap.data() as Workspace), id: snap.id };
+      if (existing.ownerId !== ownerId) {
+        throw new AppError("NOT_FOUND", "Workspace not found", 404);
+      }
+      const updated: Workspace = {
+        ...existing,
+        ...patch,
+        updatedAt: new Date().toISOString(),
+        archivedAt:
+          patch.status === "ARCHIVED"
+            ? new Date().toISOString()
+            : existing.archivedAt,
+      };
+      tx.set(ref, updated);
+      return updated;
+    });
   }
 }

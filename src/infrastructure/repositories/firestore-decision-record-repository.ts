@@ -81,21 +81,31 @@ export class FirestoreBlueprintRepository implements BlueprintRepository {
     return records[0] ?? null;
   }
 
+  /** Transactional — see CLAUDE.md [[firestore-atomic-writes]]. */
   async updateStatus(
     id: string,
     ownerId: string,
     status: Blueprint["status"],
     approvedAt?: string
   ): Promise<Blueprint> {
-    const existing = await this.getById(id, ownerId);
-    if (!existing) throw new AppError("NOT_FOUND", "Blueprint not found", 404);
-    const updated = {
-      ...existing,
-      status,
-      approvedAt: approvedAt ?? existing.approvedAt,
-    };
-    await this.col().doc(id).set(updated);
-    return updated;
+    const ref = this.col().doc(id);
+    return getAdminDb().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new AppError("NOT_FOUND", "Blueprint not found", 404);
+      }
+      const existing = { ...(snap.data() as Blueprint), id: snap.id };
+      if (existing.ownerId !== ownerId) {
+        throw new AppError("NOT_FOUND", "Blueprint not found", 404);
+      }
+      const updated: Blueprint = {
+        ...existing,
+        status,
+        approvedAt: approvedAt ?? existing.approvedAt,
+      };
+      tx.set(ref, updated);
+      return updated;
+    });
   }
 }
 
@@ -149,6 +159,8 @@ export class FirestoreExperimentRepository implements ExperimentRepository {
     return { ...(snap.data() as ExperimentDefinition), id: snap.id };
   }
 
+  /** Transactional — see CLAUDE.md [[firestore-atomic-writes]]. No ownerId
+   * check here, matching getById()'s pre-existing (unchanged) semantics. */
   async update(
     workspaceId: string,
     sessionId: string,
@@ -157,20 +169,23 @@ export class FirestoreExperimentRepository implements ExperimentRepository {
       Pick<ExperimentDefinition, "status" | "results" | "winnerVariantId" | "limitations">
     >
   ): Promise<ExperimentDefinition> {
-    const existing = await this.getById(workspaceId, sessionId, experimentId);
-    if (!existing) {
-      throw new AppError("NOT_FOUND", "Experiment not found", 404);
-    }
-    const updated = { ...existing, ...patch };
-    await getAdminDb()
+    const ref = getAdminDb()
       .collection("workspaces")
       .doc(workspaceId)
       .collection("sessions")
       .doc(sessionId)
       .collection("experiments")
-      .doc(experimentId)
-      .set(updated);
-    return updated;
+      .doc(experimentId);
+    return getAdminDb().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw new AppError("NOT_FOUND", "Experiment not found", 404);
+      }
+      const existing = { ...(snap.data() as ExperimentDefinition), id: snap.id };
+      const updated = { ...existing, ...patch };
+      tx.set(ref, updated);
+      return updated;
+    });
   }
 }
 
