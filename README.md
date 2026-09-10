@@ -24,21 +24,26 @@ Runtime truth lives in `src/`. Agent operating rules: [`CLAUDE.md`](CLAUDE.md). 
 - Entering `DECISION_READY` requires ≥1 option, ≥1 assumption, **zero HIGH-priority open unknowns**, and no DomainPack validation errors.
 - Approve Decision → immutable `DecisionRecord` → Generate Blueprint (`DRAFT`) → Approve Blueprint (`APPROVED`). Markdown export: `GET /api/sessions/:sessionId/blueprint/export`.
 
-**Decision Canvas** shows Overview, Options, Assumptions, Evidence, Experiments, Judge draft (when `status === DECISION_READY`), and Blueprint. Session JSON may contain `unknowns`, but the Canvas **does not** render an Unknowns panel today — HIGH open unknowns still block `DECISION_READY`.
+**Decision Canvas** shows Overview, Options, Assumptions, Constraints, Unknowns (every unknown with its resolution/evidence, plus resolution actions for blocking HIGH ones), Decision Readiness, Evidence, Experiments, Judge draft (whenever one exists — with the current blockers listed if the session isn't `DECISION_READY` yet), and Blueprint. HIGH open unknowns still block `DECISION_READY`.
 
 ## Agents and routing (runtime)
 
-| Mode | Intent | Who runs |
+| Mode | Stage | Who runs |
 |---|---|---|
-| QUICK / STANDARD | most intents | Analyst (Gemini) only |
-| any | `VERIFY` | Allowlisted tools only (today: calculator via DomainPack) — not an LLM council |
-| DEEP | `FRAME_PROBLEM` / `GENERATE_OPTIONS` / `DISCUSS` | Analyst only |
-| DEEP | `CRITIQUE` | Critic (Groq) + **conditional** SecondOpinion (DeepSeek) |
-| DEEP | `PREPARE_DECISION` | Analyst + optional SecondOpinion + Critic + Judge (Gemini) |
+| QUICK | (single call) | Analyst (Groq) only |
+| STANDARD | FRAME / OPTIONS / CRITIQUE | Analyst (Gemini) only |
+| STANDARD | PREPARE | Judge (Gemini) only, using the session's prior artifacts |
+| any | VERIFY | Allowlisted tools only (today: calculator via DomainPack) — not an LLM council |
+| DEEP | DISCUSS / FRAME | Analyst (+ Critic if the framing is high-impact/ambiguous) |
+| DEEP | OPTIONS | Analyst ∥ SecondOpinion (DeepSeek), genuinely parallel and blind to each other |
+| DEEP | CRITIQUE | Critic (Groq) + conditional SecondOpinion re-engagement |
+| DEEP | PREPARE | Judge (Gemini) only, using the session's prior Analyst/Critic/SecondOpinion artifacts — it does **not** re-run them |
 
-**SecondOpinion** (optional 4th DEEP role): runs only when `ENABLE_SECOND_OPINION` is on, DeepSeek is configured, and the intent is `CRITIQUE` or `PREPARE_DECISION` (or related challenge/low-evidence triggers). It calls DeepSeek with **no Gemini fallback**. It does **not** self-score agreement; Judge derives `agentAgreementMethod`: `JUDGE_HEURISTIC` | `UNAVAILABLE`.
+Provider-to-role binding is fixed (`model-gateway.ts::resolveProviderForRole`): Analyst → Groq (QUICK) / Gemini (else); Critic → Groq always; Judge → Gemini (falls back to Groq/DeepSeek on failure); SecondOpinion → DeepSeek only, no fallback. No rotation or blind-identity judging exists today.
 
-**Auto “▶ Tự động 4 bước”:** `FRAME_PROBLEM` → `GENERATE_OPTIONS` → `CRITIQUE` → `VERIFY` in DEEP. It never auto-approves a Decision Record.
+**SecondOpinion** (optional DEEP role): runs only when `ENABLE_SECOND_OPINION` is on, DeepSeek is configured, and the stage is `OPTIONS` or `CRITIQUE` (or related challenge/low-evidence triggers). It calls DeepSeek with **no Gemini fallback**, and never sees Analyst's output. It does **not** self-score agreement; Judge derives `agentAgreementMethod`: `JUDGE_HEURISTIC` | `UNAVAILABLE`.
+
+**Auto "Bắt đầu phân tích" / "Tiếp tục quy trình":** a single button, available in every Mode, that omits Intent so the server-owned StageController picks the next stage each step (content-driven, not a fixed step list — capped at 8 steps per click as a safety limit). It advances through whatever stages the current Mode actually runs (see table above) and stops on `DECISION_READY`/`DECIDED`/`PAUSED`/`BLOCKED`/no-advance. It never auto-approves a Decision Record — that's always an explicit human action.
 
 ## Stack
 
@@ -66,7 +71,8 @@ Open [http://localhost:3000](http://localhost:3000).
 |---|---|
 | `GEMINI_API_KEY` / `GROQ_API_KEY` / `DEEPSEEK_API_KEY` | Server only |
 | `NEXT_PUBLIC_FIREBASE_*` | Client Firebase config |
-| `FIREBASE_ADMIN_CREDENTIALS_PATH` / `GOOGLE_APPLICATION_CREDENTIALS` | Path to gitignored `service.json` |
+| `FIREBASE_ADMIN_CREDENTIALS_PATH` / `GOOGLE_APPLICATION_CREDENTIALS` | Path to gitignored `service.json` — **local/server dev only**, see note below |
+| `FIREBASE_ADMIN_PROJECT_ID` / `FIREBASE_ADMIN_CLIENT_EMAIL` / `FIREBASE_ADMIN_PRIVATE_KEY` | Inline Admin credentials — **required on Vercel** (see below) |
 | `USE_MEMORY_STORE=true` | In-memory repos (local/tests). **Forbidden in production runtime** (allowed only during Next production build phase) |
 | `DEV_AUTH_BYPASS=true` | Local bypass only when Firebase client is not configured; off in production |
 | `ENABLE_SECOND_OPINION` | Optional DeepSeek reviewer (default on when unset) |
@@ -74,11 +80,19 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### Connected mode (Firestore)
 
+**Local / any environment with a writable filesystem:**
 1. Place a service-account JSON at `./service.json` (gitignored).
 2. Fill `NEXT_PUBLIC_FIREBASE_*`.
 3. Set `USE_MEMORY_STORE=false`, `DEV_AUTH_BYPASS=false`.
 4. Firebase Console → Authentication → **Email/Password**; authorize `localhost` and your Vercel domain.
 5. Rules/indexes source: `src/infrastructure/firebase/rules/`. Production deploy may be **IAM-blocked** even when `pnpm test:rules` (emulator) passes — see `CLAUDE.md`.
+
+**Vercel (or any serverless target without a persistent filesystem):** `./service.json` does not work — there is nowhere to put the file at deploy time, and it must never be committed. Set the three inline Admin variables instead, in Vercel → Project → Settings → Environment Variables (Production):
+- `FIREBASE_ADMIN_PROJECT_ID` — the Firebase project ID (same value as `NEXT_PUBLIC_FIREBASE_PROJECT_ID`).
+- `FIREBASE_ADMIN_CLIENT_EMAIL` — the service account's `client_email` field.
+- `FIREBASE_ADMIN_PRIVATE_KEY` — the service account's `private_key` field, pasted as-is (the code un-escapes literal `\n` sequences automatically, so pasting the key on one line with `\n` for newlines is fine).
+
+If any of the three is missing, **every** Firestore-backed API route (e.g. `POST /api/workspaces`) fails — `getAdminDb()` now throws a specific `AppError` naming exactly which variable is missing, visible directly in the API response body / browser Network tab, rather than only in server logs.
 
 Without required composite indexes, some list endpoints (messages / runs / decision / blueprint) can return **500** against real Firestore.
 

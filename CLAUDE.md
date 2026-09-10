@@ -356,3 +356,114 @@ DISCOVERY → VALIDATING → (chặn 2 Unknown HIGH) → giải quyết hợp l�
 DECISION_READY → DECIDED → Blueprint APPROVED chạy được TRỌN VẸN qua UI
 thật với API AI thật (Gemini/Groq/DeepSeek) — đúng yêu cầu "Release Hard
 Gate" của MASTER CODING PROMPT v13 §70.
+
+## Audit MASTER WORK PROMPT v21 — 5 fix xác nhận (2026-09-10)
+
+**Nguồn:** audit toàn diện thuật toán đa tác tử (algorithm forensics +
+research 8+ framework ngoài: AutoGen, CrewAI, LangGraph, MetaGPT, ChatDev,
+Mixture-of-Agents, literature về judge self-preference bias...). Kết luận
+audit: giả thuyết "model bị giới hạn quá mức / bị đối xử bất công" của
+user KHÔNG có bằng chứng trong code — token budget khiêm tốn và scale
+đúng theo vai trò, Analyst/SecondOpinion chạy song song thật sự mù nhau,
+Judge chọn (select) thay vì trộn (blend) options đúng như research mới
+nhất (arXiv:2603.20324) khuyến nghị. Do đó KHÔNG làm redesign kiến trúc
+adaptive-council (blind judge/rotating judge/information-gain routing) —
+chỉ sửa 5 lỗi cụ thể có bằng chứng. Chi tiết đầy đủ (bảng Mode×Stage×Model,
+fairness audit F1-F12, so sánh với 8+ framework, trích dẫn nghiên cứu):
+`reports/26-09-10-10-18-layer-a-multiagent-audit.md`.
+
+**5 fix (commit `c66bdab`, đã lên `main`):**
+1. STANDARD từng chỉ chạy Analyst ở MỌI stage kể cả PREPARE — Analyst vẫn
+   có thể tự đề xuất `suggestedStatus: DECISION_READY` (qua
+   `gateStatusTransition`, hợp lệ) nhưng KHÔNG BAO GIỜ có `judgeDraft` (chỉ
+   Judge mới ghi field đó) → `approveDecision` luôn từ chối vì thiếu
+   `judgeDraft` → session STANDARD kẹt DECISION_READY vĩnh viễn, không thể
+   duyệt. Fix: STANDARD PREPARE giờ chạy Judge-only (giống DEEP PREPARE),
+   vẫn nằm trong `maxCalls: 2` sẵn có của STANDARD.
+2. Nút "Gửi" thường ở QUICK/STANDARD từng luôn gửi kèm `intent` mặc định
+   "DISCUSS" từ state UI trừ khi user tự mở panel "Nâng cao/QA" — nghĩa là
+   StageController không bao giờ được tự suy luận stage cho user thường.
+   Fix: chỉ gửi `intent` thủ công khi user THẬT SỰ đã tương tác với dropdown
+   đó (`intentTouched`), khớp hành vi DEEP đã có sẵn.
+3. `deriveBlueprintContent` từng hardcode CHÍNH nội bộ Layer A (route
+   `/api/sessions/.../run`, vai trò Analyst/Judge/HardPolicyGate,
+   Vercel/Firebase) vào `apiContracts`/`aiWorkflow`/`security`/
+   `observability`/`test`/`deploymentRequirements` — Blueprint (tài liệu
+   bàn giao cho người build SẢN PHẨM MỤC TIÊU, vd. app FTMO) mô tả nhầm
+   chính công cụ quyết định thay vì sản phẩm. Fix: các field đó giờ suy ra
+   từ option đã chọn/constraints/entity của session.
+4. `judgeDraft.selectedEvidenceIds` từng lấy TOÀN BỘ evidence trong session
+   bất kể `verificationStatus`; `acceptedAssumptionIds` từng lấy TOÀN BỘ
+   assumption kể cả `CONTRADICTED` — cả hai chảy thẳng vào `DecisionRecord`
+   bất biến. Fix: lọc `VERIFIED` cho evidence, loại `CONTRADICTED` cho
+   assumption trước khi ghi `judgeDraft`.
+5. Test E2E `decision-loop.spec.ts` assert text trên `data-testid="auto-workflow"`
+   ngay sau khi click — nhưng `Composer.tsx` đổi hẳn sang
+   `data-testid="stop-workflow"` ngay khi bắt đầu chạy, nên assertion đó
+   luôn fail tất định (không phải flaky) một khi DEEP auto-run chạy lâu hơn
+   timeout của assertion. Fix: assert đúng trạng thái mà click thật sự tạo
+   ra (`stop-workflow` xuất hiện).
+
+**Phát hiện thêm chưa fix (ghi nợ để làm sau):** `canEnterDecisionReady`
+không kiểm tra `status` của assumption — kết hợp với việc Intent thủ công
+(`PREPARE_DECISION` qua panel Nâng cao/QA) bỏ qua hẳn cảnh báo tạm dừng
+`EVIDENCE_CONTRADICTION` của `decideWorkflowStage` (cảnh báo đó chỉ áp dụng
+khi intent được suy luận tự động) — nghĩa là một assumption `CONTRADICTED`
+vẫn có thể lọt tới DECISION_READY/DECIDED qua đường Intent thủ công. Fix
+#4 ở trên là phòng thủ chiều sâu cho đúng đường này (đã có test), nhưng
+đóng hẳn gate thì chưa làm.
+
+## Fix bug production: [[vercel-firebase-admin-500]] (2026-09-10)
+
+**Nguồn:** phát hiện TRỰC TIẾP qua browser thật trên production
+(`aichatbot-inky-phi.vercel.app/workspaces`, commit `c66bdab`) — trang báo
+"Unexpected server error", console cho thấy CẢ `GET` lẫn `POST
+/api/workspaces` đều 500.
+
+**Nguyên nhân gốc:** README chỉ tài liệu hoá MỘT cách cấu hình Firebase
+Admin — đặt file `service.json` tại `./service.json`
+(`FIREBASE_ADMIN_CREDENTIALS_PATH`). Cách này KHÔNG THỂ hoạt động trên
+Vercel vì serverless function không có filesystem bền vững để đặt file lúc
+deploy (và tuyệt đối không được commit file đó — có secret). Code
+(`src/infrastructure/firebase/admin.ts`) thật ra đã hỗ trợ sẵn cách dùng 3
+biến môi trường inline (`FIREBASE_ADMIN_PROJECT_ID` /
+`FIREBASE_ADMIN_CLIENT_EMAIL` / `FIREBASE_ADMIN_PRIVATE_KEY`) — đúng cách
+phải dùng trên Vercel — nhưng README chưa từng nhắc tới, nên khả năng cao
+project Vercel chưa có 3 biến này. Khi `hasFirebaseAdmin=false` trên
+production, `getAdminApp()` throw ngay trước khi chạm Firestore → MỌI route
+dùng `FirestoreXxxRepository` đều 500 giống nhau — đúng khớp triệu chứng
+quan sát được (cả GET lẫn POST cùng lỗi).
+
+**Giới hạn của lần fix này:** không có quyền truy cập Vercel dashboard/logs
+từ session này nên KHÔNG THỂ tự xác nhận 100% 3 biến đó đang thiếu — đây là
+chẩn đoán có bằng chứng mạnh (khớp message lỗi + đọc code), không phải xác
+nhận trực tiếp từ log. Người vận hành cần tự vào Vercel → Project →
+Settings → Environment Variables (Production) để set 3 biến trên, dùng
+đúng `project_id`/`client_email`/`private_key` từ service account JSON.
+
+**Fix code (giúp tự chẩn đoán, không che dấu triệu chứng):**
+`getAdminApp()` trong `admin.ts` từng throw `Error` thường — bị
+`handleRouteError` làm phẳng thành `"Unexpected server error"` chung
+chung, không có manh mối nào lộ ra ngoài server log (mà tôi không truy cập
+được). Giờ throw `AppError("INTERNAL_ERROR", ...)` với message nêu rõ
+đúng tên 3 biến còn thiếu — `handleRouteError` giữ nguyên message của
+`AppError`, nên body JSON trả về (thấy được ngay trong tab Network của
+browser) giờ tự nói rõ nguyên nhân, không cần vào Vercel logs mới biết.
+
+**Test:** `src/tests/unit/env-connected.test.ts` (thêm 1 test) — gọi
+`getAdminDb()` khi không có biến Admin nào, xác nhận throw đúng `AppError`
+chứa tên biến `FIREBASE_ADMIN_PROJECT_ID` trong message.
+
+**Sửa README.md (đồng bộ với code thật, phát hiện khi đọc toàn bộ codebase
+theo yêu cầu audit này):**
+- Bảng "Agents and routing": STANDARD giờ có PREPARE=Judge (fix #1 ở
+  trên); DEEP PREPARE_DECISION sửa lại đúng là Judge-only dùng artifact cũ
+  (KHÔNG chạy lại Analyst+SecondOpinion+Critic như bảng cũ mô tả sai).
+- Decision Canvas: xoá câu "không render Unknowns panel" — đã sai từ khi
+  HIGH-01 thêm `UnknownsPanel.tsx` (2026-09-08), README chưa từng cập nhật
+  theo.
+- "Auto Tự động 4 bước": mô tả cũ (DEEP-only, 4 intent cố định) không khớp
+  `runAutoWorkflow` thật (mọi Mode, content-driven qua StageController, cap
+  an toàn 8 bước) — viết lại đúng hành vi.
+- Thêm mục hướng dẫn Vercel-specific cho Firebase Admin (3 biến inline) vào
+  phần "Connected mode (Firestore)".

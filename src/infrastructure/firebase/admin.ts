@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { getServerEnv } from "@/config/env";
+import { AppError } from "@/infrastructure/api/errors";
 
 type AdminApp = import("firebase-admin/app").App;
 type Auth = import("firebase-admin/auth").Auth;
@@ -31,7 +32,20 @@ function getAdminApp(): AdminApp {
   if (app) return app;
   const env = getServerEnv();
   if (!env.hasFirebaseAdmin) {
-    throw new Error("Firebase Admin is not configured");
+    // Was a plain Error before — handleRouteError() flattens any non-AppError
+    // into the generic "Unexpected server error", so this exact, common
+    // misconfiguration (e.g. deployed to Vercel, which has no persistent
+    // filesystem for a service.json file — only the inline vars below work
+    // there) was invisible in the API response, only in server logs.
+    throw new AppError(
+      "INTERNAL_ERROR",
+      "Firebase Admin is not configured for this environment: set " +
+        "FIREBASE_ADMIN_PROJECT_ID + FIREBASE_ADMIN_CLIENT_EMAIL + " +
+        "FIREBASE_ADMIN_PRIVATE_KEY (required on Vercel — there is no " +
+        "persistent filesystem for a service.json file there), or " +
+        "FIREBASE_ADMIN_CREDENTIALS_PATH for a local/server file path.",
+      500
+    );
   }
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports

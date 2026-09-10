@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { getServerEnv, resetEnvCache } from "@/config/env";
+import { getAdminDb, resetAdminAppCache } from "@/infrastructure/firebase/admin";
+import { AppError } from "@/infrastructure/api/errors";
 
 const probePath = join(process.cwd(), ".tmp-test-sa.json");
 
@@ -123,6 +125,23 @@ describe("production guards", () => {
       expect(getServerEnv().devAuthBypass).toBe(false);
     } finally {
       setNodeEnv(prev);
+    }
+  });
+
+  it("getAdminDb() throws a diagnosable AppError (not a swallowed generic 500) when Admin is unconfigured", () => {
+    // Reproduces the production symptom: hasFirebaseAdmin=false (e.g.
+    // deployed to Vercel with only NEXT_PUBLIC_FIREBASE_* set, no
+    // FIREBASE_ADMIN_* vars) — every Firestore-backed route must fail with
+    // a message that actually says what's missing, not "Unexpected server
+    // error" with no clue (handleRouteError only preserves AppError
+    // messages; a plain Error gets flattened to the generic message).
+    resetEnvCache();
+    resetAdminAppCache();
+    try {
+      expect(() => getAdminDb()).toThrow(AppError);
+      expect(() => getAdminDb()).toThrow(/FIREBASE_ADMIN_PROJECT_ID/);
+    } finally {
+      resetAdminAppCache();
     }
   });
 });
