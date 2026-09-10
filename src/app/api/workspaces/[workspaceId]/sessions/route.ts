@@ -63,7 +63,7 @@ export async function POST(request: Request, { params }: Params) {
         currentStage: "DISCUSS",
         state: "IDLE",
         completedStages: [],
-        routeMode: "STANDARD",
+        routeMode: "DEEP",
         artifacts: {},
         blockers: [],
         usage: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },

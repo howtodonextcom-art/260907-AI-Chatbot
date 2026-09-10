@@ -146,9 +146,18 @@ describe("Judge structured-output recovery (regression, 2026-09-08 live finding)
     expect(result.structured?.decision).toBe("ACCEPT_WITH_CHANGES");
   });
 
-  it("degrades to a safe INSUFFICIENT_EVIDENCE default (never throws away the reply) when genuinely unparseable", async () => {
+  it("leaves structured undefined (fail-visible) when genuinely unparseable — keeps raw reply", async () => {
     const gateway = new ModelGateway([
       fakeProvider([
+        {
+          provider: "gemini",
+          model: "gemini-3.6-flash",
+          content: "I cannot comply with structured output right now.",
+          structured: undefined,
+          usage: {},
+          latencyMs: 1,
+        },
+        // retry after schema error
         {
           provider: "gemini",
           model: "gemini-3.6-flash",
@@ -164,10 +173,8 @@ describe("Judge structured-output recovery (regression, 2026-09-08 live finding)
       request: baseRequest(),
       analystContent: "analyst says X",
     });
-    expect(result.structured?.decision).toBe("INSUFFICIENT_EVIDENCE");
-    expect(result.structured?.reply).toBe(
-      "I cannot comply with structured output right now."
-    );
+    expect(result.structured).toBeUndefined();
+    expect(result.content).toContain("cannot comply");
   });
 });
 

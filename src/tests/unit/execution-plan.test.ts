@@ -132,40 +132,15 @@ describe("execution plan — Mode × Stage matrix", () => {
     expect(r.plan.estimatedCalls).toBe(1);
   });
 
-  it("STANDARD non-PREPARE stages stay Analyst-only", () => {
-    for (const intent of [
-      "FRAME_PROBLEM",
-      "GENERATE_OPTIONS",
-      "CRITIQUE",
-    ] as const) {
-      const r = decideRouting({
-        routeMode: "STANDARD",
-        intent,
-        evidenceCoverage: 0.2,
-        importance: "HIGH",
-        hasDeepseek: true,
-      });
-      expect(r.runAnalyst).toBe(true);
-      expect(r.runCritic).toBe(false);
-      expect(r.runJudge).toBe(false);
-      expect(r.runSecondOpinion).toBe(false);
-    }
-  });
-
-  it("STANDARD PREPARE runs Judge only — so DECISION_READY is reachable and approvable (H1 fix)", () => {
-    const r = decideRouting({
-      routeMode: "STANDARD",
-      intent: "PREPARE_DECISION",
-      evidenceCoverage: 0.2,
-      importance: "HIGH",
-      hasDeepseek: true,
-    });
-    expect(r.runAnalyst).toBe(false);
-    expect(r.runCritic).toBe(false);
-    expect(r.runSecondOpinion).toBe(false);
-    expect(r.runJudge).toBe(true);
-    expect(r.plan.estimatedCalls).toBe(1);
-  });
+  // QUICK/STANDARD-specific routing behavior (Analyst-only debate,
+  // single-call economy mode) no longer exists — v18, see CLAUDE.md
+  // [[deep-only]]. RunSessionSchema now rejects any routeMode but "DEEP",
+  // so a legacy routeMode="STANDARD" value can only ever reach
+  // decideRouting() from a pre-existing Firestore session, in which case
+  // it now falls through to identical DEEP behavior (proven by "covers
+  // every Mode × Stage without throwing" and "VERIFY uses tools only
+  // across modes" above, which still iterate MODES including the legacy
+  // values) rather than crashing.
 });
 
 describe("role token ceilings", () => {

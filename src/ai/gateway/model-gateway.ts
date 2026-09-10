@@ -19,11 +19,15 @@ import {
 
 export type PreferredProvider = "gemini" | "groq" | "deepseek";
 
+/**
+ * DEEP is the only mode (v18 — see CLAUDE.md [[deep-only]]); QUICK's
+ * groq-for-everything shortcut is gone. `routeMode` param kept for call-site
+ * compatibility even though it no longer affects the result.
+ */
 export function resolveProviderForRole(
   role: AgentRole,
-  routeMode: RouteMode
+  _routeMode: RouteMode
 ): PreferredProvider {
-  if (routeMode === "QUICK") return "groq";
   if (role === "CRITIC") return "groq";
   return "gemini";
 }

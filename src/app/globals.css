@@ -13,6 +13,14 @@
   --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
   --warn: #c4a035;
   --danger: #c45c4a;
+  /* --danger lightened ~12% toward white, same hue: verified via relative-
+     luminance calc (not estimated) to clear WCAG AA 4.5:1 for normal text
+     on all 3 dark surfaces the app actually uses (--bg 5.43, --bg-elevated
+     5.02, --bg-panel 4.62) — --danger itself only hits 4.15 on
+     --bg-elevated and 4.45 on --bg-panel, both below AA. Use for TEXT
+     only; borders/backgrounds keep --danger (already clears the 3:1
+     non-text threshold). */
+  --danger-text: #cb7060;
   --analyst: #5b9fd4;
   --critic: #d4a05b;
   --judge: #5a9e96;
@@ -253,6 +261,17 @@ select {
 
 .lab-cta-pulse:hover {
   box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* Role-colored pill: set `color` on the element, background derives from it.
+   Shared by MessageBubble / RunStageChips / DebateTimeline so the same
+   currentColor-tint formula lives in one place. */
+.lab-chip {
+  border-radius: 6px;
+  padding: 0.125rem 0.375rem;
+  font-size: var(--type-xs);
+  font-weight: 600;
+  background: color-mix(in oklab, currentColor 14%, transparent);
 }
 }
 

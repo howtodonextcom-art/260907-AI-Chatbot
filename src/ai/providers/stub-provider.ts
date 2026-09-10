@@ -48,7 +48,7 @@ function stubStructured(request: NormalizedModelRequest): Record<string, unknown
   if (request.role === "CRITIC") {
     return {
       reply:
-        "Phản bác Analyst: Readiness Lab MVP vẫn giả định người dùng trả tiền rehearsal mà chưa có evidence chuyển đổi.",
+        "Readiness Lab MVP vẫn giả định người dùng trả tiền rehearsal mà chưa có evidence chuyển đổi.",
       criticisms: [
         "Do not treat unverified user claims as HIGH reliability",
         "Broker execution is a non-goal",
@@ -91,7 +91,7 @@ function stubStructured(request: NormalizedModelRequest): Record<string, unknown
   if (request.role === "SECOND_OPINION") {
     return {
       reply:
-        "Phương án khác: Simulator-first Challenge Gym — tập trung ngày giả lập trước checklist, không copier.",
+        "Simulator-first Challenge Gym — tập trung ngày giả lập trước checklist, không copier.",
       recommendedDirection: "Simulator-first Challenge Gym",
       preferredOptionTitle: "Simulator-first Challenge Gym",
       independentOptions: [

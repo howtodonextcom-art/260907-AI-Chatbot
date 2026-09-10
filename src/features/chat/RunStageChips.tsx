@@ -73,17 +73,15 @@ export function RunStageChips(props: {
               </span>
             ) : null}
             <span
-              className="rounded px-1.5 py-0.5 text-xs font-semibold"
+              className="lab-chip"
               data-status={entry.role?.status ?? "PLANNED"}
               style={{
                 color:
                   entry.role?.status === "FAILED"
-                    ? "var(--danger)"
+                    ? "var(--danger-text)"
                     : entry.role?.status === "COMPLETED"
                       ? "var(--ok, #3dd68c)"
                       : "var(--text-muted)",
-                background:
-                  "color-mix(in oklab, currentColor 14%, transparent)",
               }}
               title={entry.role?.message ?? entry.role?.provider}
             >

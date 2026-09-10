@@ -88,11 +88,13 @@ describe("deepseek registry", () => {
   });
 });
 
-describe("resolveProviderForRole unchanged", () => {
-  it("keeps QUICK/CRITIC on groq and others on gemini", () => {
-    expect(resolveProviderForRole("ANALYST", "QUICK")).toBe("groq");
-    expect(resolveProviderForRole("CRITIC", "STANDARD")).toBe("groq");
-    expect(resolveProviderForRole("ANALYST", "STANDARD")).toBe("gemini");
+describe("resolveProviderForRole", () => {
+  // QUICK's groq-for-everything shortcut is gone (v18 — DEEP is the only
+  // mode, see CLAUDE.md [[deep-only]]); CRITIC still routes to groq
+  // regardless of routeMode, everything else to gemini.
+  it("keeps CRITIC on groq and others on gemini", () => {
+    expect(resolveProviderForRole("CRITIC", "DEEP")).toBe("groq");
+    expect(resolveProviderForRole("ANALYST", "DEEP")).toBe("gemini");
     expect(resolveProviderForRole("JUDGE", "DEEP")).toBe("gemini");
   });
 });

@@ -134,7 +134,7 @@ export default function LoginPage() {
           </button>
         )}
         {error ? (
-          <p className="text-sm" role="alert" style={{ color: "var(--danger)" }}>
+          <p className="text-sm" role="alert" style={{ color: "var(--danger-text)" }}>
             {error}
           </p>
         ) : null}

@@ -93,7 +93,7 @@ export default function WorkspaceDetailPage() {
         type="button"
         onClick={archiveWorkspace}
         className="mt-3 text-sm"
-        style={{ color: "var(--danger)" }}
+        style={{ color: "var(--danger-text)" }}
       >
         Lưu trữ workspace
       </button>
@@ -171,7 +171,7 @@ export default function WorkspaceDetailPage() {
       </form>
 
       {error ? (
-        <p className="text-sm" role="alert" style={{ color: "var(--danger)" }}>
+        <p className="text-sm" role="alert" style={{ color: "var(--danger-text)" }}>
           {error}
         </p>
       ) : null}

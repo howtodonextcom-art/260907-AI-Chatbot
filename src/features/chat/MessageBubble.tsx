@@ -12,9 +12,12 @@ const ROLE_COLOR: Record<string, string> = {
   TOOL: "var(--text-muted)",
 };
 
+/** Neutral role chips — never prepend scripted phrases into model content. */
 const ROLE_KICKER: Record<string, string> = {
-  CRITIC: "Phản bác Analyst",
-  SECOND_OPINION: "Phương án khác",
+  CRITIC: "Critic",
+  SECOND_OPINION: "Second Opinion",
+  ANALYST: "Analyst",
+  JUDGE: "Judge",
 };
 
 export function MessageBubble({ message }: { message: Message }) {
@@ -29,9 +32,6 @@ export function MessageBubble({ message }: { message: Message }) {
   const kicker = message.agentRole
     ? ROLE_KICKER[message.agentRole]
     : undefined;
-  const alreadyPrefixed =
-    Boolean(kicker) &&
-    message.content.trimStart().toLowerCase().startsWith(kicker!.toLowerCase());
 
   return (
     <article
@@ -53,21 +53,16 @@ export function MessageBubble({ message }: { message: Message }) {
         ) : null}
         {kicker ? (
           <span
-            className="rounded px-1.5 py-0.5 font-medium"
+            className="lab-chip font-medium"
             data-testid="role-kicker"
-            style={{
-              color,
-              background: "color-mix(in oklab, currentColor 14%, transparent)",
-            }}
+            style={{ color }}
           >
             {kicker}
           </span>
         ) : null}
       </div>
       <div className="whitespace-pre-wrap text-sm leading-relaxed">
-        {alreadyPrefixed || !kicker
-          ? message.content
-          : `${kicker}: ${message.content}`}
+        {message.content}
       </div>
     </article>
   );

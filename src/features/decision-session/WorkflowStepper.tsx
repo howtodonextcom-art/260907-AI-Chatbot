@@ -85,7 +85,7 @@ export function WorkflowStepper(props: {
                   : status === "RUNNING"
                     ? "var(--analyst)"
                     : status === "BLOCKED"
-                      ? "var(--danger)"
+                      ? "var(--danger-text)"
                       : "var(--text-muted)",
             }}
           >

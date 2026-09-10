@@ -125,8 +125,18 @@ export const CreateMessageSchema = z.object({
   content: z.string().min(1).max(20000),
 });
 
+/**
+ * DEEP is the only mode that can actually be run (v18 — see CLAUDE.md
+ * [[deep-only]]). QUICK/STANDARD skipped Critic/Judge/SecondOpinion and
+ * never produced a real multi-agent debate — a degraded experience with no
+ * legitimate use case, so the server now refuses to run anything else.
+ * RouteMode itself stays 3-valued in types.ts purely so pre-existing
+ * Firestore sessions with workflow.routeMode="QUICK"/"STANDARD" still
+ * deserialize without a type error; this schema is the actual enforcement
+ * point that keeps every NEW run DEEP-only.
+ */
 export const RunSessionSchema = z.object({
-  routeMode: z.enum(["QUICK", "STANDARD", "DEEP"]),
+  routeMode: z.literal("DEEP"),
   /** Optional — when omitted, StageController picks the next WorkflowStage. */
   intent: z
     .enum([

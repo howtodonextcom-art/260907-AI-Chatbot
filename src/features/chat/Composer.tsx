@@ -1,12 +1,8 @@
 "use client";
 
-import type { RouteMode } from "@/domain/decision/types";
-
-const FOOTER_BY_MODE: Record<RouteMode, string> = {
-  QUICK: "QUICK: một lần gọi nhẹ",
-  STANDARD: "STANDARD: quy trình đầy đủ (Analyst theo giai đoạn) · PREPARE = Judge quyết định",
-  DEEP: "DEEP: Gửi = 1 giai đoạn · Bắt đầu phân tích = cả pipeline. FRAME = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). Pipeline luôn tiến tới PREPARE (Judge) kể cả khi còn HIGH Unknown — Unknown chỉ chặn lúc DUYỆT quyết định, không chặn quy trình. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.",
-};
+/** DEEP is the only mode (v18 — see CLAUDE.md [[deep-only]]) — fixed footer copy. */
+const DEEP_FOOTER_HINT =
+  "DEEP: Gửi = 1 giai đoạn · Bắt đầu phân tích = cả pipeline. FRAME = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). Pipeline luôn tiến tới PREPARE (Judge) kể cả khi còn HIGH Unknown — Unknown chỉ chặn lúc DUYỆT quyết định, không chặn quy trình. VERIFY trước CRITIQUE. DECIDED chỉ Human Approve.";
 
 export function Composer(props: {
   value: string;
@@ -14,15 +10,11 @@ export function Composer(props: {
   onSend: () => void;
   onStop: () => void;
   running: boolean;
-  routeMode?: RouteMode;
   onAutoRun?: () => void;
   autoRunning?: boolean;
   autoStepLabel?: string | null;
   autoLabel?: string;
 }) {
-  const modeHint = props.routeMode
-    ? FOOTER_BY_MODE[props.routeMode]
-    : null;
   const busy = props.running || Boolean(props.autoRunning);
   const cta = props.autoLabel ?? "Bắt đầu phân tích";
 
@@ -55,7 +47,7 @@ export function Composer(props: {
             type="button"
             onClick={props.onStop}
             className="lab-btn min-h-[56px] border px-4 text-sm"
-            style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
+            style={{ borderColor: "var(--danger)", color: "var(--danger-text)" }}
             data-testid="stop-workflow"
           >
             Dừng
@@ -90,7 +82,7 @@ export function Composer(props: {
       >
         {props.autoRunning && props.autoStepLabel
           ? `Đang chạy quy trình: ${props.autoStepLabel} — bấm Dừng để huỷ.`
-          : `Enter để gửi · Shift+Enter xuống dòng${modeHint ? ` · ${modeHint}` : ""}`}
+          : `Enter để gửi · Shift+Enter xuống dòng · ${DEEP_FOOTER_HINT}`}
       </p>
     </div>
   );

@@ -81,29 +81,14 @@ describe("criteria weights", () => {
 });
 
 describe("routing", () => {
-  it("QUICK is single call", () => {
-    const r = decideRouting({
-      routeMode: "QUICK",
-      intent: "DISCUSS",
-      evidenceCoverage: 0.2,
-      importance: "LOW",
-    });
-    expect(r.runAnalyst).toBe(true);
-    expect(r.runCritic).toBe(false);
-    expect(r.runJudge).toBe(false);
-  });
-
-  it("STANDARD DISCUSS is Analyst only (no debate)", () => {
-    const r = decideRouting({
-      routeMode: "STANDARD",
-      intent: "DISCUSS",
-      evidenceCoverage: 0.2,
-      importance: "MEDIUM",
-    });
-    expect(r.runAnalyst).toBe(true);
-    expect(r.runCritic).toBe(false);
-    expect(r.runJudge).toBe(false);
-  });
+  // QUICK/STANDARD are no longer runnable modes (v18 — see CLAUDE.md
+  // [[deep-only]]; RunSessionSchema now rejects anything but "DEEP"). The
+  // "covers every Mode × Stage without throwing" / "VERIFY uses tools only
+  // across modes" tests in execution-plan.test.ts still exercise legacy
+  // routeMode values through decideRouting() to prove a pre-existing
+  // Firestore session with workflow.routeMode="QUICK"/"STANDARD" falls
+  // through to full DEEP behavior instead of crashing — that coverage
+  // replaces the mode-specific assertions previously here.
 
   it("DEEP FRAME_PROBLEM uses Parallel Blind Framing (not a single-provider council)", () => {
     const r = decideRouting({

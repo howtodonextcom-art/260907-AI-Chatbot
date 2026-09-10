@@ -45,10 +45,11 @@ describe("Conflict Detection Engine", () => {
       report.conflictMap.coreDisagreements[0]?.viewpoints.map((v) => v.provider)
     ).toEqual(["gemini", "deepseek", "groq"]);
     const summary = summarizeParallelFraming(frames, report);
-    expect(summary).toContain("Parallel Blind Framing");
+    expect(summary).toContain("framers=3");
     expect(summary).toContain("gemini");
     expect(summary).toContain("deepseek");
     expect(summary).toContain("groq");
+    expect(summary).not.toMatch(/Parallel Blind Framing complete/i);
   });
 
   it("flags assumptions raised by only one provider", () => {

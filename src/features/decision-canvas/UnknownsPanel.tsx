@@ -80,7 +80,7 @@ function UnknownRow(props: {
             <span
               data-testid="unknown-importance"
               style={{
-                color: unknown.importance === "HIGH" ? "var(--danger)" : undefined,
+                color: unknown.importance === "HIGH" ? "var(--danger-text)" : undefined,
               }}
             >
               {unknown.importance}
@@ -243,7 +243,7 @@ function UnknownRow(props: {
           ) : null}
 
           {localError ? (
-            <p className="text-xs" style={{ color: "var(--danger)" }}>
+            <p className="text-xs" style={{ color: "var(--danger-text)" }}>
               {localError}
             </p>
           ) : null}
@@ -266,11 +266,23 @@ export function UnknownsPanel(props: {
   ).length;
 
   return (
-    <section>
+    <section
+      className={blockingCount > 0 ? "-mx-3 rounded-md border-l-2 px-3 py-2" : undefined}
+      style={
+        blockingCount > 0
+          ? {
+              borderColor: "var(--danger)",
+              background: "color-mix(in oklab, var(--danger) 6%, transparent)",
+            }
+          : undefined
+      }
+      data-testid="unknowns-section"
+      data-blocking={blockingCount > 0}
+    >
       <h2 className="type-section mb-1">
         Unknowns ({props.unknowns.length})
         {blockingCount > 0 ? (
-          <span className="ml-2 text-xs font-normal" style={{ color: "var(--danger)" }}>
+          <span className="ml-2 text-xs font-normal" style={{ color: "var(--danger-text)" }}>
             {blockingCount} đang chặn Decision Ready
           </span>
         ) : null}

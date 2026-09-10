@@ -259,18 +259,19 @@ export function synthesizeConflicts(args: {
   return detectFrameConflicts(args);
 }
 
-/** Neutral multi-frame summary — never prefers a single provider's prose. */
+/**
+ * Neutral multi-frame summary for session.latestSummary — structural only.
+ * Does not invent council prose; each line is provider-tagged raw framing.
+ */
 export function summarizeParallelFraming(
   frames: IndependentFrame[],
   report: FrameConflictReport
 ): string {
   const lines = [
-    `Parallel Blind Framing complete (${report.providerCount} providers).`,
-    `Core disagreements: ${report.conflictMap.coreDisagreements.length}.`,
+    `framers=${report.providerCount}; conflictTopics=${report.conflictMap.coreDisagreements.length}`,
     ...frames.map((f) => {
-      const label = f.perspectiveName?.trim() || f.provider;
       const framing = (f.problemFraming ?? f.reply).trim().slice(0, 280);
-      return `[${f.provider}/${label}] ${framing}`;
+      return `[${f.provider}] ${framing}`;
     }),
   ];
   return lines.join("\n").slice(0, 8000);

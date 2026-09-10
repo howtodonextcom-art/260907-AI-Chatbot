@@ -118,10 +118,16 @@ export async function runJudge(args: {
   };
 }
 
+/**
+ * Last-resort parse when loose JSON recovery fails. Forward raw prose only —
+ * do NOT invent a decision enum (that masked real schema failures as a
+ * confident INSUFFICIENT_EVIDENCE). Zod will reject missing `decision` and
+ * callers keep structured undefined / retry / partial — fail-visible.
+ */
 function safeJson(content: string): unknown {
   try {
     return JSON.parse(content);
   } catch {
-    return { reply: content, decision: "INSUFFICIENT_EVIDENCE" };
+    return { reply: content };
   }
 }

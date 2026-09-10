@@ -37,7 +37,6 @@ export function extractLastDebateRoles(messages: Message[]): AgentRole[] {
 export function DebateTimeline(props: {
   messages: Message[];
   activeRole?: string | null;
-  routeMode: string;
 }) {
   const roles = extractLastDebateRoles(props.messages);
   const showActive =
@@ -49,7 +48,6 @@ export function DebateTimeline(props: {
       : null;
 
   if (roles.length === 0 && !showActive) {
-    if (props.routeMode !== "DEEP") return null;
     return (
       <div
         className="mb-3 rounded-lg border px-3 py-2 text-xs"
@@ -86,10 +84,9 @@ export function DebateTimeline(props: {
             </span>
           ) : null}
           <span
-            className="rounded px-1.5 py-0.5 text-xs font-semibold"
+            className="lab-chip"
             style={{
               color: ROLE_COLOR[role],
-              background: "color-mix(in oklab, currentColor 14%, transparent)",
               outline:
                 showActive === role && idx === display.length - 1
                   ? `1px solid ${ROLE_COLOR[role]}`

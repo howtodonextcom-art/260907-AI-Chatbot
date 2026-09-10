@@ -727,7 +727,7 @@ export async function* runDecisionOrchestrator(args: {
   if (routing.runAnalyst) {
   yield {
     event: "agent.started",
-    data: { role: "ANALYST", provider: args.routeMode === "QUICK" ? "groq" : "gemini" },
+    data: { role: "ANALYST", provider: "gemini" },
   };
 
   const analystRun = await args.repos.agentRuns.create({

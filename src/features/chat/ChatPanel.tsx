@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "@/domain/evidence/types";
 import type {
-  RouteMode,
   WorkflowLastRun,
   WorkflowMetadata,
 } from "@/domain/decision/types";
@@ -25,7 +24,6 @@ export function ChatPanel(props: {
   streamingText: string;
   streamingRole?: string | null;
   running: boolean;
-  routeMode: RouteMode;
   onSend: (content: string) => Promise<unknown>;
   onStop: () => void;
   onAutoRun?: (content: string) => Promise<void>;
@@ -64,11 +62,7 @@ export function ChatPanel(props: {
   }
 
   const emptyDescription =
-    props.routeMode === "DEEP"
-      ? "Mode DEEP — Parallel Blind Framing rồi VERIFY→OPTIONS→CRITIQUE. Bạn sở hữu quyết định cuối (DECIDED)."
-      : props.routeMode === "QUICK"
-        ? "Mode QUICK chỉ 1 lần gọi nhẹ. Chọn STANDARD/DEEP để chạy quy trình quyết định đầy đủ."
-        : "Mode STANDARD chạy quy trình đầy đủ với Analyst theo giai đoạn. Chọn DEEP để có Critic/SecondOpinion/Judge.";
+    "Parallel Blind Framing rồi VERIFY→OPTIONS→CRITIQUE→PREPARE. Bạn sở hữu quyết định cuối (DECIDED).";
 
   return (
     <section className="flex min-h-0 flex-col" aria-label="Chat quyết định">
@@ -81,31 +75,28 @@ export function ChatPanel(props: {
         ) : null}
 
         <div className="mx-auto grid max-w-3xl gap-3">
-          {props.routeMode === "DEEP" ? (
-            <div
-              className="rounded-lg border px-3 py-2 text-xs leading-relaxed"
-              style={{
-                borderColor: "var(--border)",
-                color: "var(--text-muted)",
-                background: "var(--bg-elevated)",
-              }}
-              data-testid="deep-stage-hint"
-            >
-              {props.workflow?.artifacts?.CRITIQUE?.status === "CURRENT"
-                ? "DEEP: Critic (Groq) đã chạy. Judge (Gemini) ở PREPARE — HIGH Unknown vẫn chặn duyệt quyết định."
-                : props.workflow?.currentStage === "OPTIONS" ||
-                    props.workflow?.completedStages?.includes("OPTIONS") ||
-                    props.workflow?.artifacts?.OPTIONS?.status === "CURRENT"
-                  ? "Bước tiếp theo: CRITIQUE — Critic (Groq). Gửi = một giai đoạn (chạy Groq ngay). Bắt đầu phân tích = tiếp pipeline."
-                  : "FRAME/DISCOVERY = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). HIGH Unknowns không chặn pipeline (chỉ chặn duyệt quyết định). VERIFY trước CRITIQUE. DECIDED chỉ Human Approve."}
-            </div>
-          ) : null}
+          <div
+            className="rounded-lg border px-3 py-2 text-xs leading-relaxed"
+            style={{
+              borderColor: "var(--border)",
+              color: "var(--text-muted)",
+              background: "var(--bg-elevated)",
+            }}
+            data-testid="deep-stage-hint"
+          >
+            {props.workflow?.artifacts?.CRITIQUE?.status === "CURRENT"
+              ? "DEEP: Critic (Groq) đã chạy. Judge (Gemini) ở PREPARE — HIGH Unknown vẫn chặn duyệt quyết định."
+              : props.workflow?.currentStage === "OPTIONS" ||
+                  props.workflow?.completedStages?.includes("OPTIONS") ||
+                  props.workflow?.artifacts?.OPTIONS?.status === "CURRENT"
+                ? "Bước tiếp theo: CRITIQUE — Critic (Groq). Gửi = một giai đoạn (chạy Groq ngay). Bắt đầu phân tích = tiếp pipeline."
+                : "FRAME/DISCOVERY = Parallel Blind Framing (Gemini∥DeepSeek∥Groq). HIGH Unknowns không chặn pipeline (chỉ chặn duyệt quyết định). VERIFY trước CRITIQUE. DECIDED chỉ Human Approve."}
+          </div>
 
           {(props.messages.length > 0 || props.running) && (
             <DebateTimeline
               messages={props.messages}
               activeRole={props.streamingRole}
-              routeMode={props.routeMode}
             />
           )}
 
@@ -152,7 +143,6 @@ export function ChatPanel(props: {
         onSend={handleSend}
         onStop={props.onStop}
         running={props.running}
-        routeMode={props.routeMode}
         onAutoRun={props.onAutoRun ? handleAutoRun : undefined}
         autoRunning={props.autoRunning}
         autoStepLabel={props.autoStepLabel}

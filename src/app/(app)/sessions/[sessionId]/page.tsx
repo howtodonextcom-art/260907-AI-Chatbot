@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { apiFetch, getAuthToken } from "@/features/workspace/api-client";
-import type { DecisionSession, RouteMode } from "@/domain/decision/types";
+import type { DecisionSession } from "@/domain/decision/types";
 import type { Message, EvidenceItem } from "@/domain/evidence/types";
 import type { AgentRun, Blueprint, ExperimentDefinition } from "@/domain/blueprint/types";
 import type { DecisionRecord } from "@/domain/decision/types";
@@ -39,13 +39,7 @@ export default function SessionPage() {
     stages: string[];
     estimatedCalls: number;
   } | null>(null);
-  const [routeMode, setRouteMode] = useState<RouteMode>("STANDARD");
   const [intent, setIntent] = useState<Intent>("DISCUSS");
-  // Tracks whether the user has ever manually touched the advanced/QA
-  // Intent dropdown. Until they do, a plain Send must let StageController
-  // infer the stage — otherwise every normal STANDARD/QUICK message would
-  // silently carry the stale default "DISCUSS" intent forever (H2 fix).
-  const [intentTouched, setIntentTouched] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [streamingRole, setStreamingRole] = useState<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
@@ -72,9 +66,10 @@ export default function SessionPage() {
     }>(`/api/sessions/${sessionId}`);
     setSession(s.session);
     setHumanApproveProof(s.humanApproveProof ?? null);
-    if (s.session.workflow?.routeMode) {
-      setRouteMode(s.session.workflow.routeMode);
-    }
+    // Legacy sessions may still have workflow.routeMode="QUICK"/"STANDARD"
+    // persisted (pre-v18 data) — intentionally never synced into local
+    // state; DEEP is the only mode the UI ever shows or runs (v18, see
+    // CLAUDE.md [[deep-only]]).
     const [msgs, ev, rs, dec, bp, list, ex] = await Promise.all([
       apiFetch<{ messages: Message[] }>(`/api/sessions/${sessionId}/messages`),
       apiFetch<{ evidence: EvidenceItem[] }>(
@@ -122,7 +117,6 @@ export default function SessionPage() {
   async function sendMessage(
     content: string,
     overrides?: {
-      routeMode?: RouteMode;
       intent?: Intent;
       /** Omit intent so StageController picks the next stage (v17). */
       autoIntent?: boolean;
@@ -152,17 +146,17 @@ export default function SessionPage() {
       const token = getAuthToken();
       abortRef.current = new AbortController();
       const runBody: Record<string, unknown> = {
-        routeMode: overrides?.routeMode ?? routeMode,
+        routeMode: "DEEP",
         messageId: created.message.id,
       };
-      const mode = overrides?.routeMode ?? routeMode;
+      // DEEP always omits intent on a plain Send unless the caller passed
+      // an explicit override (e.g. "Phản biện thêm" / "Xác minh lại") —
+      // StageController infers the next stage from session content instead
+      // (v17). The Nâng cao/QA Intent dropdown no longer auto-applies to
+      // plain sends now that DEEP is the only mode (v18); it still drives
+      // those explicit override buttons.
       if (overrides?.intent) {
         runBody.intent = overrides.intent;
-      } else if (!overrides?.autoIntent && mode !== "DEEP" && intentTouched) {
-        // Only honor the advanced/QA Intent dropdown once the user has
-        // actually chosen a value there — otherwise omit it so
-        // StageController infers the next stage, same as DEEP already does.
-        runBody.intent = intent;
       }
       const res = await fetch(`/api/sessions/${sessionId}/run`, {
         method: "POST",
@@ -336,7 +330,6 @@ export default function SessionPage() {
   /**
    * Server-owned automatic workflow (v17): omit Intent each step; StageController
    * chooses FRAME→OPTIONS→CRITIQUE→VERIFY→PREPARE. Never auto-approves DECIDED.
-   * Mode stays as the user selected (not forced to DEEP).
    */
   async function runAutoWorkflow(seedContent: string) {
     if (!seedContent.trim() || running || autoRunning) return;
@@ -351,10 +344,7 @@ export default function SessionPage() {
         const content = first
           ? seedContent
           : "Tiếp tục quy trình quyết định theo giai đoạn tiếp theo.";
-        const result = await sendMessage(content, {
-          routeMode,
-          autoIntent: true,
-        });
+        const result = await sendMessage(content, { autoIntent: true });
         first = false;
         if (stoppedRef.current || result.failed) break;
         if (result.status === "DECISION_READY" || result.status === "DECIDED") {
@@ -507,13 +497,8 @@ export default function SessionPage() {
     <div className="flex h-screen flex-col">
       <SessionHeader
         session={session}
-        routeMode={routeMode}
-        onRouteModeChange={setRouteMode}
         intent={intent}
-        onIntentChange={(i) => {
-          setIntentTouched(true);
-          setIntent(i);
-        }}
+        onIntentChange={setIntent}
         costUsd={totalCost}
         agentStatus={agentStatus}
         onToggleCanvas={() => setCanvasOpen((v) => !v)}
@@ -589,7 +574,6 @@ export default function SessionPage() {
           streamingText={streamingText}
           streamingRole={streamingRole}
           running={running}
-          routeMode={routeMode}
           onSend={sendMessage}
           onStop={stop}
           onAutoRun={runAutoWorkflow}

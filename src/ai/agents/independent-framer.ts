@@ -37,6 +37,13 @@ export async function runIndependentFramer(args: {
   schemaVersion: string;
 }> {
   const prompt = getPrompt("ANALYST");
+  const lensByProvider: Record<PreferredProvider, string> = {
+    gemini:
+      "Analytical lens: product/UX feasibility and delivery scope for a research lab MVP.",
+    deepseek:
+      "Analytical lens: statistical methodology, walk-forward validity, and anti-overclaim rigor.",
+    groq: "Analytical lens: operational risk, cost, failure modes, and maintainability.",
+  };
   const blindInstructions = `${prompt.template}
 
 PARALLEL BLIND FRAMING RULES:
@@ -44,6 +51,8 @@ PARALLEL BLIND FRAMING RULES:
 - Frame the RAW human problem only. Do not assume another agent already framed it.
 - Return JSON with reply, problemFraming, assumptions, unknowns, constraints, options (optional proposals).
 - Keep problemFraming to 2-4 sentences naming your primary analytical lens.
+- ${lensByProvider[args.provider]}
+- No greetings, stage disclaimers, or fixed opening phrases.
 
 ${args.request.systemInstructions}`;
 

@@ -110,13 +110,13 @@ export function DecisionCanvas(props: {
         <h2 className="type-section mb-1">Decision Readiness</h2>
         <p
           className="font-medium"
-          style={{ color: readiness.ready ? "var(--success)" : "var(--danger)" }}
+          style={{ color: readiness.ready ? "var(--success)" : "var(--danger-text)" }}
           data-testid="readiness-status"
         >
           {readiness.ready ? "READY" : "NOT READY"}
         </p>
         {readiness.blocking.length > 0 ? (
-          <ul className="mt-1 list-disc pl-4 text-xs" style={{ color: "var(--danger)" }}>
+          <ul className="mt-1 list-disc pl-4 text-xs" style={{ color: "var(--danger-text)" }}>
             {readiness.blocking.map((b) => (
               <li key={b.code} data-testid={`readiness-blocker-${b.code}`}>
                 {b.message}
@@ -207,15 +207,29 @@ export function DecisionCanvas(props: {
       <section>
         <h2 className="type-section mb-1">
           Assumptions ({session.assumptions.length})
+          {contradictedAssumptionCount > 0 ? (
+            <span className="ml-2 text-xs font-normal" style={{ color: "var(--danger-text)" }}>
+              {contradictedAssumptionCount} bị mâu thuẫn — chặn pipeline
+            </span>
+          ) : null}
         </h2>
         {session.assumptions.length === 0 ? (
           <CanvasEmpty label="Chưa có giả định được ghi nhận." />
         ) : (
           <ul className="list-disc pl-4">
             {session.assumptions.map((a) => (
-              <li key={a.id}>
+              <li
+                key={a.id}
+                style={
+                  a.status === "CONTRADICTED"
+                    ? { color: "var(--danger-text)" }
+                    : undefined
+                }
+              >
                 {a.statement}{" "}
-                <span style={{ color: "var(--text-muted)" }}>({a.status})</span>
+                <span style={{ color: a.status === "CONTRADICTED" ? undefined : "var(--text-muted)" }}>
+                  ({a.status})
+                </span>
               </li>
             ))}
           </ul>
@@ -288,13 +302,13 @@ export function DecisionCanvas(props: {
               <div data-testid="judge-blocked">
                 <p
                   className="text-xs font-medium"
-                  style={{ color: "var(--danger)" }}
+                  style={{ color: "var(--danger-text)" }}
                 >
                   Judge đã có đề xuất, nhưng session CHƯA sẵn sàng quyết định:
                 </p>
                 <ul
                   className="list-disc pl-4 text-xs"
-                  style={{ color: "var(--danger)" }}
+                  style={{ color: "var(--danger-text)" }}
                 >
                   {readiness.blocking.map((b) => (
                     <li key={b.code}>{b.message}</li>

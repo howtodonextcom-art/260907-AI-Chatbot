@@ -2,7 +2,6 @@
 
 import type {
   DecisionSession,
-  RouteMode,
   WorkflowStage,
   WorkflowState,
 } from "@/domain/decision/types";
@@ -19,8 +18,6 @@ export type Intent =
 
 export function SessionHeader(props: {
   session: DecisionSession;
-  routeMode: RouteMode;
-  onRouteModeChange: (m: RouteMode) => void;
   intent: Intent;
   onIntentChange: (i: Intent) => void;
   costUsd: number;
@@ -57,24 +54,19 @@ export function SessionHeader(props: {
           aria-label="Điều khiển chạy"
         >
           <div className="flex flex-wrap items-center gap-2">
-            <label className="text-sm" style={{ color: "var(--text-muted)" }}>
+            <span className="text-sm" style={{ color: "var(--text-muted)" }}>
               Mode{" "}
-              <select
-                value={props.routeMode}
-                onChange={(e) =>
-                  props.onRouteModeChange(e.target.value as RouteMode)
-                }
-                className="lab-input ml-1 min-h-9 px-2 py-1 text-sm"
-                title="Mode điều khiển độ sâu — hệ thống tự chọn giai đoạn"
+              <span
+                className="ml-1 rounded px-2 py-1 text-sm font-medium"
+                style={{ color: "var(--text)", background: "var(--accent-soft)" }}
                 data-testid="route-mode"
+                title="DEEP là chế độ duy nhất — Analyst/Critic/SecondOpinion/Judge đầy đủ"
               >
-                <option value="QUICK">QUICK — 1 gọi</option>
-                <option value="STANDARD">STANDARD — quy trình đầy đủ</option>
-                <option value="DEEP">DEEP — đa góc nhìn</option>
-              </select>
-            </label>
+                DEEP — đa góc nhìn
+              </span>
+            </span>
           </div>
-          <RouteModeHint routeMode={props.routeMode} intent={props.intent} />
+          <RouteModeHint intent={props.intent} />
         </div>
 
         <div

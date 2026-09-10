@@ -73,8 +73,13 @@ function planFromFlags(args: {
 }
 
 /**
- * Mode × Stage routing matrix (v17).
- * Mode controls depth, not which workflow stage runs.
+ * Stage routing matrix (v18 — DEEP only). QUICK/STANDARD are no longer
+ * selectable/creatable (RunSessionSchema locks routeMode to "DEEP" — see
+ * CLAUDE.md [[deep-only]]); every intent routes through the DEEP-shaped
+ * logic below regardless of what routeMode value is passed in, so a
+ * legacy session that still has workflow.routeMode="QUICK"/"STANDARD"
+ * stored (pre-existing Firestore data) safely falls through to full DEEP
+ * behavior instead of crashing or silently degrading.
  */
 export function decideRouting(args: {
   routeMode: RouteMode;
@@ -143,42 +148,7 @@ export function decideRouting(args: {
     });
   }
 
-  if (args.routeMode === "QUICK") {
-    return wrap({
-      runVerifyTools: false,
-      runAnalyst: true,
-      runParallelFraming: false,
-      runSecondOpinion: false,
-      runCritic: false,
-      runJudge: false,
-      reasons: ["QUICK: single economy Analyst call"],
-    });
-  }
-
-  if (args.routeMode === "STANDARD") {
-    if (stage === "PREPARE") {
-      return wrap({
-        runVerifyTools: false,
-        runAnalyst: false,
-        runParallelFraming: false,
-        runSecondOpinion: false,
-        runCritic: false,
-        runJudge: flags.enableJudge,
-        reasons: ["STANDARD PREPARE: Judge only, using prior Analyst artifacts"],
-      });
-    }
-    return wrap({
-      runVerifyTools: false,
-      runAnalyst: true,
-      runParallelFraming: false,
-      runSecondOpinion: false,
-      runCritic: false,
-      runJudge: false,
-      reasons: [`STANDARD ${stage}: Analyst only`],
-    });
-  }
-
-  // --- DEEP ---
+  // --- DEEP (only mode) ---
   const hasSo =
     flags.enableSecondOpinion && Boolean(args.hasDeepseek);
 

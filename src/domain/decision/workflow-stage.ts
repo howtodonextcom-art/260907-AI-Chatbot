@@ -58,7 +58,7 @@ const STAGES_AFTER_OPTIONS: WorkflowStage[] = [
 ];
 
 export function emptyWorkflowMetadata(
-  routeMode: RouteMode = "STANDARD"
+  routeMode: RouteMode = "DEEP"
 ): WorkflowMetadata {
   return {
     currentStage: "DISCUSS",
@@ -150,7 +150,6 @@ export function decideWorkflowStage(args: {
 }): WorkflowDecision {
   const session = args.session;
   const workflow = session.workflow ?? emptyWorkflowMetadata(args.routeMode);
-  const routeMode = args.routeMode ?? workflow.routeMode ?? "STANDARD";
 
   if (session.status === "DECIDED" || session.status === "ARCHIVED") {
     return {
@@ -231,10 +230,7 @@ export function decideWorkflowStage(args: {
   } else if (needsVerify(session) && !hasCurrentArtifact(workflow, "VERIFY")) {
     // VERIFY MUST run before CRITIQUE when verification work remains.
     next = "VERIFY";
-  } else if (
-    !hasCurrentArtifact(workflow, "CRITIQUE") &&
-    routeMode !== "QUICK"
-  ) {
+  } else if (!hasCurrentArtifact(workflow, "CRITIQUE")) {
     next = "CRITIQUE";
   } else if (needsVerify(session)) {
     next = "VERIFY";
@@ -277,25 +273,6 @@ export function decideWorkflowStage(args: {
           : "Prepare complete — JudgeDraft exists but readiness blockers (e.g. HIGH Unknowns) still require human action before approval.",
       };
     }
-  }
-
-  // QUICK: single lightweight stage only (FRAME or DISCUSS), no full pipeline
-  if (routeMode === "QUICK") {
-    if (
-      workflow.completedStages.includes("FRAME") ||
-      hasCurrentArtifact(workflow, "FRAME") ||
-      hasCurrentArtifact(workflow, "DISCUSS")
-    ) {
-      return {
-        currentStage: workflow.currentStage === "DISCUSS" ? "DISCUSS" : "FRAME",
-        nextStage: null,
-        shouldAdvance: false,
-        state: "COMPLETED",
-        blockers: [],
-        rationale: "QUICK mode: single economy call complete.",
-      };
-    }
-    next = hasFraming(session) ? "DISCUSS" : "FRAME";
   }
 
   return {

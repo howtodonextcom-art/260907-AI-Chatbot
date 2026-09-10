@@ -111,7 +111,7 @@ export default function WorkspacesPage() {
         </h2>
         {loading ? <LoadingBlock label="Đang tải workspace…" /> : null}
         {error ? (
-          <p className="mb-3 text-sm" role="alert" style={{ color: "var(--danger)" }}>
+          <p className="mb-3 text-sm" role="alert" style={{ color: "var(--danger-text)" }}>
             {error}
           </p>
         ) : null}

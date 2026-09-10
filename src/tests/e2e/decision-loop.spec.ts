@@ -33,8 +33,9 @@ test.describe("full decision loop", () => {
     await page.getByTestId("create-session").click();
     await expect(page).toHaveURL(/\/sessions\//, { timeout: 15_000 });
 
-    // Mode remains visible; Intent must not be required in normal UI.
-    await page.getByTestId("route-mode").selectOption("DEEP");
+    // DEEP is the only mode (v18) — Mode is a static label, not a
+    // <select>, and Intent must not be required in normal UI.
+    await expect(page.getByTestId("route-mode")).toHaveText(/DEEP/);
     await expect(page.getByTestId("workflow-stepper")).toBeVisible();
     await expect(page.getByTestId("deep-stage-hint")).toBeVisible();
     await expect(page.getByTestId("deep-stage-hint")).toContainText(

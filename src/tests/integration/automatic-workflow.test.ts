@@ -108,7 +108,7 @@ function optionsJson() {
 
 function critiqueJson() {
   return JSON.stringify({
-    reply: "Phản bác Analyst: Adoption unproven.",
+    reply: "Adoption unproven for the Readiness Lab MVP pricing assumption.",
     criticisms: ["Adoption unproven"],
     unsupportedAssumptions: ["Traders will pay $15/mo"],
     missingEvidence: ["Willingness to pay survey"],
@@ -118,7 +118,7 @@ function critiqueJson() {
 
 function soJson() {
   return JSON.stringify({
-    reply: "Phương án khác: Challenge Gym.",
+    reply: "Challenge Gym is the divergent direction.",
     recommendedDirection: "Challenge Gym",
     preferredOptionTitle: "Challenge Gym",
     independentOptions: [
