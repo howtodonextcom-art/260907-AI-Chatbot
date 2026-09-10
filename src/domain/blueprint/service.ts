@@ -4,7 +4,6 @@ import type { Blueprint } from "@/domain/blueprint/types";
 import type { BlueprintContent } from "@/domain/blueprint/schema";
 import { BlueprintContentSchema } from "@/domain/blueprint/schema";
 import { validateBlueprintSemantics } from "@/domain/blueprint/validator";
-import { getDomainPack } from "@/domain-packs/registry";
 
 function entityNameFromTitle(title: string): string {
   const cleaned = title.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
@@ -20,7 +19,6 @@ export function deriveBlueprintContent(args: {
   const selected = args.session.options.find(
     (o) => o.id === args.decision.selectedOptionId
   );
-  const pack = getDomainPack(args.session.domainPackId);
   const accepted = args.session.assumptions.filter((a) =>
     args.decision.acceptedAssumptionIds.includes(a.id)
   );
@@ -79,46 +77,57 @@ export function deriveBlueprintContent(args: {
         ownership: "session owner",
       },
     ],
+    // NOTE: apiContracts/aiWorkflow/security/observability/test/deployment
+    // below describe the TARGET PRODUCT being decided about (e.g. the
+    // approved option's own API, its own AI usage if any) — never Layer A's
+    // own routes (/api/sessions/...) or Layer A's own Analyst/Critic/Judge
+    // pipeline. Layer A genuinely does not know the target product's real
+    // API design or deployment platform, so these are honest, decision-
+    // derived placeholders to refine during implementation, not a
+    // description of this decision tool (H6 fix).
     apiContracts: [
       {
         method: "POST",
-        path: `/api/sessions/${args.session.id}/run`,
-        purpose: "Run bounded decision orchestration for this session",
-        authentication: "Bearer Firebase ID token",
+        path: `/api/${entity.toLowerCase()}`,
+        purpose: `Create a ${entity} record within the approved scope: ${selected?.title ?? args.session.title}`,
+        authentication: "Define for the target product's own auth model",
       },
       {
-        method: "POST",
-        path: `/api/sessions/${args.session.id}/decision`,
-        purpose: "Explicit human approval creating an immutable DecisionRecord",
-        authentication: "Bearer Firebase ID token",
+        method: "GET",
+        path: `/api/${entity.toLowerCase()}`,
+        purpose: `List ${entity} records owned by the current user`,
+        authentication: "Define for the target product's own auth model",
       },
     ],
-    aiWorkflow: [
-      `Domain pack: ${pack.id}`,
-      "Analyst frames problem (FRAME/OPTIONS)",
-      "Critic only on CRITIQUE / PREPARE_DECISION",
-      "VERIFY uses allowlisted tools, never LLM-as-fact",
-      "Judge draft → human approve → DecisionRecord → Blueprint DRAFT",
-    ],
+    aiWorkflow: selected?.description
+      ? [
+          `Any AI/automation in this product must stay within the approved scope: ${selected.description}`,
+          "Do not add AI features beyond what the approved option specifies without a new decision.",
+        ]
+      : [
+          "The approved option does not specify AI/automation — do not add any without a new decision.",
+        ],
     securityRequirements: [
-      "Owner-scoped authorization on every session route",
-      "DECIDED only via approveDecision after HardPolicyGate",
-      "Provider API keys remain server-side",
-      "User evidence cannot self-upgrade verificationStatus",
+      `Owner-scoped access control for every ${entity} record`,
+      ...args.session.constraints.map((c) => `Enforce constraint: ${c.statement}`),
+      `Never implement a rejected option: ${
+        args.decision.rejectedOptions.map((r) => r.optionId).join(", ") || "n/a"
+      }`,
     ],
     observabilityRequirements: [
-      "Persist AgentRun provider/model/tokens/cost/latency",
-      "Log executionPlan planned vs actual provider calls",
-      "Emit tool.started / tool.completed for VERIFY",
+      `Log ${entity} lifecycle events (created/updated/completed)`,
+      "Track real usage against the acceptance criteria below",
     ],
     testRequirements: [
-      "Unit: state gate, evidence trust, stop conditions, VERIFY calculator",
-      "Integration: decision approval idempotency",
-      "E2E: workspace → session → decision loop with test doubles",
+      `Unit: ${entity} business rules and edge cases listed above`,
+      "Integration: the API contracts above",
+      "E2E: the primary user journey for the approved option",
     ],
     deploymentRequirements: [
-      "Vercel (Next.js App Router)",
-      "Firebase Auth + Firestore",
+      "Deployment platform is not determined by this decision — choose based on the target product's own constraints.",
+      ...(selected?.risks.length
+        ? [`Mitigate before deploy: ${selected.risks.join("; ")}`]
+        : []),
     ],
     acceptanceCriteria: [
       `Implements selected option: ${selected?.title ?? "as recorded"}`,
@@ -132,10 +141,10 @@ export function deriveBlueprintContent(args: {
           .map((u) => u.question),
     decisionReferences: [args.decision.id, ...args.decision.rationale.slice(0, 3)],
     implementationOrder: [
-      "Lock DecisionRecord invariants and owner scoping",
-      `Build ${selected?.title ?? args.session.title}`,
-      "Add tests for critical paths listed above",
-      "Deploy with production MemoryStore forbidden",
+      `Confirm scope: ${selected?.title ?? args.session.title}`,
+      `Build the ${entity} data model and API contracts above`,
+      "Add tests for the business rules and edge cases listed above",
+      "Ship the primary user journey behind the acceptance criteria above",
     ],
   };
 

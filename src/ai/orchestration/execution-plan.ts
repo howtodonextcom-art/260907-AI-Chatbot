@@ -145,7 +145,23 @@ export function decideRouting(args: {
   }
 
   if (args.routeMode === "STANDARD") {
-    // STANDARD full workflow stages, Analyst-only (no Critic/SO/Judge).
+    if (stage === "PREPARE") {
+      // Judge-only, mirroring DEEP PREPARE. Without this, Analyst-suggested
+      // DECISION_READY (applyAnalystState) leaves the session with no
+      // judgeDraft, and approveDecision requires judgeDraft to exist — so a
+      // STANDARD session could reach DECISION_READY and then never be
+      // approvable. STANDARD's own maxCalls budget (2) already accounted
+      // for this second call; see DEFAULT_BUDGETS comment in ai-budget.ts.
+      return wrap({
+        runVerifyTools: false,
+        runAnalyst: false,
+        runSecondOpinion: false,
+        runCritic: false,
+        runJudge: flags.enableJudge,
+        reasons: ["STANDARD PREPARE: Judge only, using prior Analyst artifacts"],
+      });
+    }
+    // STANDARD full workflow stages, Analyst-only (no Critic/SO).
     return wrap({
       runVerifyTools: false,
       runAnalyst: true,
@@ -264,7 +280,7 @@ export function roleTokenCeiling(
     Partial<Record<"ANALYST" | "SECOND_OPINION" | "CRITIC" | "JUDGE", number>>
   > = {
     QUICK: { ANALYST: 2000 },
-    STANDARD: { ANALYST: 3500 },
+    STANDARD: { ANALYST: 3500, JUDGE: 3500 },
     DEEP: {
       ANALYST: 4000,
       SECOND_OPINION: 2500,

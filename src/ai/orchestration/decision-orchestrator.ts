@@ -1063,15 +1063,26 @@ export async function* runDecisionOrchestrator(args: {
             selectedOptionId: selected?.id,
             decision: judge.structured.decision,
             rationale: judge.structured.rationale,
-            selectedEvidenceIds: evidence.map((e) => e.id),
+            // Only VERIFIED evidence backs the decision — CONTRADICTED /
+            // UNVERIFIED / NOT_VERIFIABLE items must not be stamped as
+            // "selected" just because they exist in the session (H8 fix).
+            selectedEvidenceIds: evidence
+              .filter((e) => e.verificationStatus === "VERIFIED")
+              .map((e) => e.id),
             rejectedOptions: judge.structured.rejectedOptions.map((r) => ({
               optionId:
                 options.find((o) => o.title === r.title)?.id ?? r.title,
               reasons: r.reasons,
             })),
+            // A CONTRADICTED assumption cannot simultaneously be "accepted"
+            // into the decision — exclude it rather than stamping every
+            // assumption in the session as accepted regardless of status
+            // (H8 fix).
             acceptedAssumptionIds: (
               sessionPatch.assumptions ?? args.session.assumptions
-            ).map((a) => a.id),
+            )
+              .filter((a) => a.status !== "CONTRADICTED")
+              .map((a) => a.id),
             unresolvedUnknownIds: (
               sessionPatch.unknowns ?? args.session.unknowns
             )

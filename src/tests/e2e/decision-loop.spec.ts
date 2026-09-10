@@ -44,7 +44,12 @@ test.describe("full decision loop", () => {
       "I want to build a web application to help FTMO challenge traders train before taking the real challenge."
     );
     await page.getByTestId("auto-workflow").click();
-    await expect(page.getByTestId("auto-workflow")).toHaveText(/Bắt đầu phân tích|Tiếp tục quy trình/);
+    // The Composer swaps data-testid="auto-workflow" for
+    // data-testid="stop-workflow" the instant the run starts (Composer.tsx),
+    // so asserting text on the original testid here is a guaranteed race —
+    // it never comes back before the whole multi-stage DEEP run finishes.
+    // Assert on the state the click actually produces instead (H11 fix).
+    await expect(page.getByTestId("stop-workflow")).toBeVisible();
 
     await expect(page.getByText(/Readiness Lab MVP/i).first()).toBeVisible({
       timeout: 90_000,

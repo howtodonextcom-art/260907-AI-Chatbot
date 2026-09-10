@@ -111,6 +111,22 @@ describe("blueprint derive", () => {
     expect(content.modules[0].name).toBe("Readiness Lab MVP");
   });
 
+  it("describes the target product, not Layer A's own internals (H6 fix)", () => {
+    const content = deriveBlueprintContent({ session, decision, evidence });
+    const blob = JSON.stringify(content).toLowerCase();
+    // Layer A's own routes/roles/infra must never leak into a Blueprint —
+    // it should describe the product being built, not this decision tool.
+    expect(blob).not.toContain("/api/sessions/");
+    expect(blob).not.toContain("hardpolicygate");
+    expect(blob).not.toContain("agentrun");
+    expect(blob).not.toContain("executionplan");
+    expect(blob).not.toContain("vercel");
+    expect(blob).not.toContain("memorystore");
+    expect(content.apiContracts.every((c) => !c.path.startsWith("/api/sessions/"))).toBe(
+      true
+    );
+  });
+
   it("markdown export is usable as coding-agent input", () => {
     const content = deriveBlueprintContent({ session, decision, evidence });
     const fields = contentToBlueprintFields(content);

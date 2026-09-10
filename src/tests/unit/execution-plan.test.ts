@@ -129,12 +129,11 @@ describe("execution plan — Mode × Stage matrix", () => {
     expect(r.plan.estimatedCalls).toBe(1);
   });
 
-  it("STANDARD stages stay Analyst-only", () => {
+  it("STANDARD non-PREPARE stages stay Analyst-only", () => {
     for (const intent of [
       "FRAME_PROBLEM",
       "GENERATE_OPTIONS",
       "CRITIQUE",
-      "PREPARE_DECISION",
     ] as const) {
       const r = decideRouting({
         routeMode: "STANDARD",
@@ -149,6 +148,21 @@ describe("execution plan — Mode × Stage matrix", () => {
       expect(r.runSecondOpinion).toBe(false);
     }
   });
+
+  it("STANDARD PREPARE runs Judge only — so DECISION_READY is reachable and approvable (H1 fix)", () => {
+    const r = decideRouting({
+      routeMode: "STANDARD",
+      intent: "PREPARE_DECISION",
+      evidenceCoverage: 0.2,
+      importance: "HIGH",
+      hasDeepseek: true,
+    });
+    expect(r.runAnalyst).toBe(false);
+    expect(r.runCritic).toBe(false);
+    expect(r.runSecondOpinion).toBe(false);
+    expect(r.runJudge).toBe(true);
+    expect(r.plan.estimatedCalls).toBe(1);
+  });
 });
 
 describe("role token ceilings", () => {
@@ -158,6 +172,7 @@ describe("role token ceilings", () => {
     expect(roleTokenCeiling("CRITIC", "DEEP")).toBe(2500);
     expect(roleTokenCeiling("JUDGE", "DEEP")).toBe(4000);
     expect(roleTokenCeiling("ANALYST", "STANDARD")).toBe(3500);
+    expect(roleTokenCeiling("JUDGE", "STANDARD")).toBe(3500);
     expect(roleTokenCeiling("ANALYST", "QUICK")).toBe(2000);
   });
 });

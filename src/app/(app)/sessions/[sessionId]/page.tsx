@@ -41,6 +41,11 @@ export default function SessionPage() {
   } | null>(null);
   const [routeMode, setRouteMode] = useState<RouteMode>("STANDARD");
   const [intent, setIntent] = useState<Intent>("DISCUSS");
+  // Tracks whether the user has ever manually touched the advanced/QA
+  // Intent dropdown. Until they do, a plain Send must let StageController
+  // infer the stage — otherwise every normal STANDARD/QUICK message would
+  // silently carry the stale default "DISCUSS" intent forever (H2 fix).
+  const [intentTouched, setIntentTouched] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [streamingRole, setStreamingRole] = useState<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
@@ -144,7 +149,10 @@ export default function SessionPage() {
       const mode = overrides?.routeMode ?? routeMode;
       if (overrides?.intent) {
         runBody.intent = overrides.intent;
-      } else if (!overrides?.autoIntent && mode !== "DEEP") {
+      } else if (!overrides?.autoIntent && mode !== "DEEP" && intentTouched) {
+        // Only honor the advanced/QA Intent dropdown once the user has
+        // actually chosen a value there — otherwise omit it so
+        // StageController infers the next stage, same as DEEP already does.
         runBody.intent = intent;
       }
       const res = await fetch(`/api/sessions/${sessionId}/run`, {
@@ -474,7 +482,10 @@ export default function SessionPage() {
         routeMode={routeMode}
         onRouteModeChange={setRouteMode}
         intent={intent}
-        onIntentChange={setIntent}
+        onIntentChange={(i) => {
+          setIntentTouched(true);
+          setIntent(i);
+        }}
         costUsd={totalCost}
         agentStatus={agentStatus}
         onToggleCanvas={() => setCanvasOpen((v) => !v)}

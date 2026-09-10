@@ -534,4 +534,116 @@ describe("automatic workflow without manual Intent (v17)", () => {
       )
     ).toBe(true);
   });
+
+  it("judgeDraft excludes CONTRADICTED assumptions and non-VERIFIED evidence (H8 fix)", async () => {
+    const repos = getRepositories();
+    const now = new Date().toISOString();
+    let session = await seedSession();
+    const verifiedEvidence = await repos.evidence.create({
+      workspaceId: session.workspaceId,
+      sessionId: session.id,
+      ownerId: "u1",
+      type: "USER_FACT",
+      claim: "Verified claim",
+      reliability: "HIGH",
+      createdBy: "USER",
+      supportsOptionIds: [],
+      contradictsOptionIds: [],
+      verificationStatus: "VERIFIED",
+      verifiedBy: "USER",
+      createdAt: now,
+    });
+    const unverifiedEvidence = await repos.evidence.create({
+      workspaceId: session.workspaceId,
+      sessionId: session.id,
+      ownerId: "u1",
+      type: "USER_FACT",
+      claim: "Unverified claim",
+      reliability: "LOW",
+      createdBy: "USER",
+      supportsOptionIds: [],
+      contradictsOptionIds: [],
+      verificationStatus: "UNVERIFIED",
+      createdAt: now,
+    });
+
+    session = await repos.sessions.update(session.workspaceId, session.id, "u1", {
+      latestSummary: "Framed",
+      options: [
+        {
+          id: "o1",
+          title: "Readiness Lab MVP",
+          description: "d",
+          pros: [],
+          cons: [],
+          risks: [],
+          evidenceIds: [],
+          status: "PROPOSED",
+          proposedBy: "ANALYST",
+        },
+      ],
+      assumptions: [
+        {
+          id: "a1",
+          statement: "Accepted assumption",
+          status: "SUPPORTED",
+          importance: "MEDIUM",
+          evidenceIds: [verifiedEvidence.id],
+        },
+        {
+          id: "a2",
+          statement: "Contradicted assumption",
+          status: "CONTRADICTED",
+          importance: "MEDIUM",
+          evidenceIds: [],
+        },
+      ],
+      unknowns: [],
+      workflow: {
+        ...emptyWorkflowMetadata("DEEP"),
+        currentStage: "VERIFY",
+        completedStages: ["FRAME", "OPTIONS", "CRITIQUE", "VERIFY"],
+        artifacts: {
+          FRAME: { agentRunIds: [], status: "CURRENT", updatedAt: now },
+          OPTIONS: { agentRunIds: [], status: "CURRENT", updatedAt: now },
+          CRITIQUE: { agentRunIds: [], status: "CURRENT", updatedAt: now },
+          VERIFY: { agentRunIds: [], status: "CURRENT", updatedAt: now },
+        },
+      },
+    });
+
+    const gateway = new ModelGateway([
+      scriptedProvider("gemini", [prepareJson()]),
+      scriptedProvider("groq", [prepareJson()]),
+      scriptedProvider("deepseek", [prepareJson()]),
+    ]);
+
+    // Explicit intent (the "Nang cao / QA - Intent thu cong" path) — used
+    // here specifically because it is the one path that reaches Judge even
+    // though a CONTRADICTED assumption is present (the auto-workflow pause
+    // for EVIDENCE_CONTRADICTION only applies when intent is inferred, and
+    // canEnterDecisionReady does not check assumption status at all) — so
+    // this is exactly the realistic path the H8 fix must hold up under.
+    const events = await drain(
+      runDecisionOrchestrator({
+        repos,
+        session,
+        ownerId: "u1",
+        routeMode: "DEEP",
+        intent: "PREPARE_DECISION",
+        userRequest: "Continue to PREPARE",
+        requestId: "req-h8",
+        gateway,
+      })
+    );
+    expect(events.some((e) => e.event === "run.failed")).toBe(false);
+
+    session = (await repos.sessions.getBySessionId(session.id, "u1"))!;
+    expect(session.judgeDraft?.acceptedAssumptionIds).toContain("a1");
+    expect(session.judgeDraft?.acceptedAssumptionIds).not.toContain("a2");
+    expect(session.judgeDraft?.selectedEvidenceIds).toContain(verifiedEvidence.id);
+    expect(session.judgeDraft?.selectedEvidenceIds).not.toContain(
+      unverifiedEvidence.id
+    );
+  });
 });
