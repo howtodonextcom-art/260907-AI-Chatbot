@@ -695,6 +695,40 @@ export async function* runDecisionOrchestrator(args: {
       updatedAt: new Date().toISOString(),
     });
 
+    // Parallel Blind Framing just spent 2-3 real, billed LLM calls
+    // (gemini/deepseek/groq) to produce `merged.patch`. Persist it right
+    // away instead of waiting for the single end-of-function write below
+    // (P1 fix) — a client abort or a later throw in this same tick (e.g.
+    // throwIfAborted, a downstream stage error) would otherwise discard
+    // already-paid-for framing output with no way to recover it short of
+    // re-running the whole council. Deliberately NOT gated on
+    // throwIfAborted(): an aborted request is exactly the case this
+    // guards against. `sessions.update()` is a transactional partial
+    // merge (see [[firestore-atomic-writes]]), so this second write at
+    // the end of the function (still needed — it carries workflow/
+    // judgeDraft/etc. accumulated after this point) is redundant-safe,
+    // not conflicting.
+    const earlyUpdated = await args.repos.sessions.update(
+      args.session.workspaceId,
+      args.session.id,
+      args.ownerId,
+      merged.patch
+    );
+    yield {
+      event: "decision.state.updated",
+      data: {
+        sessionId: earlyUpdated.id,
+        patch: {
+          status: earlyUpdated.status,
+          assumptions: earlyUpdated.assumptions,
+          unknowns: earlyUpdated.unknowns,
+          options: earlyUpdated.options,
+          constraints: earlyUpdated.constraints,
+          workflow: earlyUpdated.workflow,
+        },
+      },
+    };
+
     // Skip sequential Analyst/SO/Critic for this FRAME tick — council already ran.
   }
 

@@ -14,6 +14,14 @@ import { AppError } from "@/infrastructure/api/errors";
 
 type Params = { params: Promise<{ sessionId: string }> };
 
+// A DEEP run streams through Parallel Blind Framing (3 concurrent LLM
+// calls) plus up to DEFAULT_BUDGETS.DEEP.maxCalls (8) further sequential
+// agent calls (Analyst/Critic/Judge/SecondOpinion) over SSE — this can
+// run long enough to matter even though the platform default is already
+// generous. Declared explicitly so the limit doesn't silently depend on
+// whatever the platform default happens to be.
+export const maxDuration = 300;
+
 export async function POST(request: Request, { params }: Params) {
   const requestId = createRequestId();
   try {

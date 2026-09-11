@@ -736,8 +736,52 @@ bộ 211 test (27 file) + `tsc --noEmit` pass sau fix.
 
 **Chưa làm (ngoài phạm vi P0-A, còn mở):** P0-B (trạng thái deploy thật
 của Firestore rules/indexes — chưa từng chạy `firebase deploy` trong
-phiên này, không được giả định là đã xong), P1 (`maxDuration` trên route
-`run`, persist `sessionPatch` ngay sau Parallel Frame thay vì chỉ ở cuối
-hàm), P2 (near-duplicate clustering cho Unknown/Assumption — hiện chỉ có
-exact-match dedup qua `dedupeByKey()`/`applyParallelFrameState()`), P2+
-(topical-relevance check cho `RESOLVE_WITH_EVIDENCE`).
+phiên này, không được giả định là đã xong), P2 (near-duplicate clustering
+cho Unknown/Assumption — hiện chỉ có exact-match dedup qua
+`dedupeByKey()`/`applyParallelFrameState()`), P2+ (topical-relevance
+check cho `RESOLVE_WITH_EVIDENCE`). P1 — xem [[parallel-frame-early-persist]].
+
+## Độ tin cậy/hiệu năng: [[parallel-frame-early-persist]] — P1 (2026-09-10)
+
+**Vấn đề thật:** `runDecisionOrchestrator()` (async generator) chỉ ghi
+`sessionPatch` xuống Firestore đúng MỘT lần, ở cuối hàm (sau khi toàn bộ
+stage trong tick đã chạy xong). Với tick FRAME (Parallel Blind Framing —
+2-3 lệnh gọi LLM thật, có tính phí, chạy song song), nếu request bị abort
+(client đóng tab/mất mạng) hoặc có exception ở đoạn bookkeeping sau đó
+(trước khi chạm dòng persist cuối), toàn bộ kết quả framing đã trả tiền
+sẽ mất trắng — không có cách khôi phục nào khác ngoài chạy lại cả hội
+đồng. `route.ts` (`/api/sessions/:id/run`) cũng chưa khai báo `maxDuration`
+tường minh — dựa hoàn toàn vào default nền tảng.
+
+**Fix:**
+- `src/app/api/sessions/[sessionId]/run/route.ts` — thêm
+  `export const maxDuration = 300` (khớp default hiện tại của Vercel
+  Fluid Compute, nhưng khai báo tường minh thay vì phụ thuộc ngầm vào
+  default nền tảng có thể đổi).
+- `decision-orchestrator.ts` — ngay sau khi `applyParallelFrameState()`
+  merge xong (`sessionPatch = { ...sessionPatch, ...merged.patch }`),
+  gọi thêm MỘT lần `args.repos.sessions.update(..., merged.patch)` +
+  yield `decision.state.updated` ngay lập tức, KHÔNG đợi tới lần ghi cuối
+  hàm. Cố tình KHÔNG gate bằng `throwIfAborted()` — chính request bị abort
+  là trường hợp cần bảo vệ. `sessions.update()` là partial-merge
+  transactional (xem [[firestore-atomic-writes]]) nên ghi 2 lần (sớm +
+  cuối hàm, lần cuối mang thêm workflow/judgeDraft tích luỹ sau đó) an
+  toàn — không xung đột, không mất dữ liệu.
+
+**Không làm thêm ngoài yêu cầu:** không thêm persist "sau mỗi stage" cho
+CRITIC/JUDGE/VERIFY — các stage đó vốn không chạy CÙNG tick với Parallel
+Frame (routing plan: `runParallelFraming` luôn đi kèm
+`runAnalyst/runCritic/runJudge = false`, xác nhận qua đọc
+`execution-plan.ts`), nên rủi ro "mất việc đã trả tiền giữa chừng" không
+tồn tại ở các stage đó theo cùng cách — thêm ghi sớm cho chúng sẽ là ghi
+Firestore thừa, không có bằng chứng cần thiết.
+
+**Test:** `src/tests/integration/automatic-workflow.test.ts` — thêm test
+"persists the Parallel Frame merge immediately, before the generator
+finishes": tự lái generator bằng `.next()`, dừng lại NGAY khi thấy sự
+kiện `decision.state.updated` đầu tiên mang `assumptions` (không để
+generator chạy hết), xác nhận `generatorDone === false` tại thời điểm đó
+NHƯNG `repos.sessions.getBySessionId()` đã có đúng assumption từ frame —
+chứng minh dữ liệu được ghi bởi lần persist SỚM, không phải lần persist
+cuối hàm (chưa từng chạy tới). Toàn bộ 212 test (27 file) + `tsc --noEmit`
+pass.

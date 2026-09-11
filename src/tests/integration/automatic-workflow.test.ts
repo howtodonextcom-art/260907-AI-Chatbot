@@ -267,6 +267,78 @@ describe("automatic workflow without manual Intent (v17)", () => {
     expect(session.workflow?.artifacts.FRAME?.status).toBe("CURRENT");
   });
 
+  // P1 fix: Parallel Blind Framing must persist its (expensive, billed)
+  // result to Firestore right after the council finishes, not only at the
+  // very end of the whole generator function — see CLAUDE.md
+  // [[pipeline-soft-gate]] persistence follow-up. Verify by manually
+  // driving the generator with .next() and stopping the instant the
+  // framing "decision.state.updated" event is observed, WITHOUT letting
+  // the generator run to completion — if the merged assumptions are
+  // already in the repository at that point, they were written by the
+  // early persist, not the end-of-function one (which never ran).
+  it("persists the Parallel Frame merge immediately, before the generator finishes", async () => {
+    process.env.GEMINI_API_KEY = "test-gemini";
+    process.env.GROQ_API_KEY = "test-groq";
+    process.env.DEEPSEEK_API_KEY = "test-deepseek";
+    resetEnvCache();
+
+    const repos = getRepositories();
+    const session = await seedSession();
+    await repos.messages.create({
+      workspaceId: session.workspaceId,
+      sessionId: session.id,
+      ownerId: "u1",
+      role: "USER",
+      content: "Help me decide on an FTMO training MVP.",
+      createdAt: new Date().toISOString(),
+    });
+
+    const gemini = scriptedProvider("gemini", [frameJson()]);
+    const groq = scriptedProvider("groq", [frameJson()]);
+    const deepseek = scriptedProvider("deepseek", [frameJson()]);
+    const gateway = new ModelGateway([gemini, groq, deepseek]);
+
+    const gen = runDecisionOrchestrator({
+      repos,
+      session,
+      ownerId: "u1",
+      routeMode: "DEEP",
+      userRequest: "Help me decide on an FTMO training MVP.",
+      requestId: "req-early-persist",
+      gateway,
+    });
+
+    let sawFramingUpdate = false;
+    let generatorDone = false;
+    for (;;) {
+      const step = await gen.next();
+      if (step.done) {
+        generatorDone = true;
+        break;
+      }
+      if (
+        step.value.event === "decision.state.updated" &&
+        Array.isArray(
+          (step.value.data.patch as { assumptions?: unknown[] })?.assumptions
+        ) &&
+        ((step.value.data.patch as { assumptions: unknown[] }).assumptions
+          .length ?? 0) > 0
+      ) {
+        sawFramingUpdate = true;
+        break;
+      }
+    }
+
+    expect(sawFramingUpdate).toBe(true);
+    expect(generatorDone).toBe(false);
+
+    const persisted = await repos.sessions.getBySessionId(session.id, "u1");
+    expect(persisted?.assumptions.length).toBeGreaterThan(0);
+    expect(
+      persisted?.assumptions.some((a) => a.statement.includes("$15/mo"))
+    ).toBe(true);
+  });
+
   it("DEEP OPTIONS persists SecondOpinion lastRun, debateNotes, and proposedBy", async () => {
     process.env.ENABLE_SECOND_OPINION = "true";
     process.env.DEEPSEEK_API_KEY = "sk-test";
