@@ -60,6 +60,10 @@ import {
   isUnknownResolutionTerminal,
 } from "@/domain/decision/unknown-policy";
 import {
+  clusterAssumptions,
+  clusterUnknowns,
+} from "@/domain/decision/entity-cluster";
+import {
   mergeDebateNotes,
   recordLastRunRole,
   hasSecondOpinionContribution,
@@ -1734,27 +1738,37 @@ export function applyAnalystState(
   },
   intent: string
 ): Partial<DecisionSession> {
-  const assumptions: Assumption[] = [
-    ...session.assumptions,
-    ...structured.assumptions.map((a) => ({
-      id: uuidv4(),
-      statement: a.statement,
-      status: a.status,
-      importance: a.importance,
-      evidenceIds: [] as string[],
-    })),
-  ];
+  const assumptions: Assumption[] = clusterAssumptions(
+    dedupeByKey(
+      [
+        ...session.assumptions,
+        ...structured.assumptions.map((a) => ({
+          id: uuidv4(),
+          statement: a.statement,
+          status: a.status,
+          importance: a.importance,
+          evidenceIds: [] as string[],
+        })),
+      ],
+      (a) => a.statement
+    )
+  );
 
-  const unknowns: Unknown[] = [
-    ...session.unknowns,
-    ...structured.unknowns.map((u) => ({
-      id: uuidv4(),
-      question: u.question,
-      importance: u.importance,
-      resolution: u.resolution,
-      evidenceIds: [] as string[],
-    })),
-  ];
+  const unknowns: Unknown[] = clusterUnknowns(
+    dedupeByKey(
+      [
+        ...session.unknowns,
+        ...structured.unknowns.map((u) => ({
+          id: uuidv4(),
+          question: u.question,
+          importance: u.importance,
+          resolution: u.resolution,
+          evidenceIds: [] as string[],
+        })),
+      ],
+      (u) => u.question
+    )
+  );
 
   const options: Option[] = [
     ...session.options,
@@ -1826,8 +1840,8 @@ export function applyAnalystState(
   }
 
   return {
-    assumptions: dedupeByKey(assumptions, (a) => a.statement),
-    unknowns: dedupeByKey(unknowns, (u) => u.question),
+    assumptions,
+    unknowns,
     options: mergeOptionsPreserveIds([], options),
     constraints: dedupeByKey(constraints, (c) => c.statement),
     status,

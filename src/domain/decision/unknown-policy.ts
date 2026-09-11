@@ -1,5 +1,6 @@
 import type { EvidenceItem } from "@/domain/evidence/types";
 import type { Unknown, UnknownResolution } from "@/domain/decision/types";
+import { evidenceTopicallySupportsUnknown } from "@/domain/decision/entity-cluster";
 
 /**
  * THE single place that decides whether a HIGH Unknown still blocks
@@ -109,6 +110,13 @@ export function resolveUnknown(
             applied: false,
             unknown,
             reason: `Evidence ${id} is not VERIFIED (status=${evidence.verificationStatus})`,
+          };
+        }
+        if (!evidenceTopicallySupportsUnknown(evidence, unknown)) {
+          return {
+            applied: false,
+            unknown,
+            reason: `Evidence ${id} does not topically support this unknown`,
           };
         }
       }

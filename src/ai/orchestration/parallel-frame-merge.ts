@@ -13,6 +13,10 @@ import {
 } from "@/domain/decision/conflict-engine";
 import { gateStatusTransition } from "@/domain/decision/state-machine";
 import { countBlockingHighUnknowns } from "@/domain/decision/unknown-policy";
+import {
+  clusterAssumptions,
+  clusterUnknowns,
+} from "@/domain/decision/entity-cluster";
 
 function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -97,6 +101,9 @@ export function applyParallelFrameState(args: {
     }
   }
 
+  const clusteredAssumptions = clusterAssumptions(assumptions);
+  const clusteredUnknowns = clusterUnknowns(unknowns);
+
   const gated = gateStatusTransition(
     session.status,
     "VALIDATING",
@@ -104,11 +111,11 @@ export function applyParallelFrameState(args: {
       problem: session.problem,
       objective: session.objective,
       optionCount: options.length,
-      assumptionCount: assumptions.length,
-      highPriorityOpenUnknowns: countBlockingHighUnknowns(unknowns),
+      assumptionCount: clusteredAssumptions.length,
+      highPriorityOpenUnknowns: countBlockingHighUnknowns(clusteredUnknowns),
       domainValidationErrors: [],
       userAskedGenerateOptions: false,
-      contradictedAssumptionCount: assumptions.filter(
+      contradictedAssumptionCount: clusteredAssumptions.filter(
         (a) => a.status === "CONTRADICTED"
       ).length,
     },
@@ -123,8 +130,8 @@ export function applyParallelFrameState(args: {
   return {
     framing,
     patch: {
-      assumptions,
-      unknowns,
+      assumptions: clusteredAssumptions,
+      unknowns: clusteredUnknowns,
       constraints,
       options,
       latestSummary,

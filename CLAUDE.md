@@ -785,3 +785,96 @@ NHƯNG `repos.sessions.getBySessionId()` đã có đúng assumption từ frame �
 chứng minh dữ liệu được ghi bởi lần persist SỚM, không phải lần persist
 cuối hàm (chưa từng chạy tới). Toàn bộ 212 test (27 file) + `tsc --noEmit`
 pass.
+
+## Nâng cấp thuật toán: [[near-dup-entity-cluster]] — P2/P2+ (2026-09-11)
+
+**Nguồn:** Forensic Remediation Brief (user-approved sau khi 2 prompt
+"algorithm upgrade" trước đó — Dual-Agent Cross-Consensus Judge/BiasMetric,
+LangGraph rewrite — bị đánh giá và từ chối, xem phần "Cố ý KHÔNG làm" bên
+dưới và `reports/26-09-11-08-00-forensic-p0a-p1-p2.md`). Khoảng trống thật:
+`parallel-frame-merge.ts`/`applyAnalystState()` chỉ có exact-string dedup
+(`norm()`/`dedupeByKey`) — 3 framer độc lập (Parallel Blind Framing) hoặc
+nhiều vòng Analyst rất dễ tạo ra HIGH Unknown/Assumption diễn đạt khác chữ
+nhưng cùng nội dung ("What is the historical frequency distribution of
+Mega 6/45 draws?" vs "What's the historical frequency distribution of
+Mega 6/45 draws?") — không bị dedupe, làm phình `highBlockingCount` giả
+tạo (không phải rủi ro thật, chỉ là trùng lặp diễn đạt).
+
+**Fix — `src/domain/decision/entity-cluster.ts` (mới, KHÔNG dùng LLM):**
+- Fingerprint = content-word set (bỏ stopword EN/VI cơ bản) + char 3-gram;
+  merge hai item khi `jaccardSimilarity >= HIGH_SIMILARITY_THRESHOLD` (0.8)
+  — ngưỡng cố ý cao, chấp nhận bỏ sót paraphrase xa hơn là gộp nhầm 2 câu
+  hỏi khác nội dung. Union-find gom cụm (bắc cầu A~B~C), không phải so
+  từng cặp độc lập.
+- `clusterUnknowns()` — **fail-safe bắt buộc**: nếu BẤT KỲ member trong
+  cụm còn blocking (`HIGH` + resolution non-terminal), item sống sót PHẢI
+  giữ non-terminal (ưu tiên `OPEN`) — không bao giờ để một unknown HIGH
+  OPEN bị nuốt vào một near-dup đã `RESOLVED`/`HUMAN_DECISION`/
+  `ACCEPTED_RISK`. `importance = max(cụm)`. Khi collapse vào trạng thái
+  vẫn blocking, xoá `resolutionNote`/`resolvedAt`/`resolvedBy` thừa từ
+  item khác trong cụm (tránh lộ provenance sai chủ).
+- `clusterAssumptions()` — `CONTRADICTED` luôn thắng (không bao giờ bị
+  gộp mất); `UNVERIFIED` không tự nâng cấp lên `SUPPORTED` qua merge.
+  `evidenceIds` là union, không mất evidence của bên nào.
+- Tích hợp **sau** exact-string dedup đã có: `applyParallelFrameState()`
+  (`parallel-frame-merge.ts`) và `applyAnalystState()`
+  (`decision-orchestrator.ts`) — dedup rẻ (exact match) chạy trước, cluster
+  Jaccard (O(n²), tốn hơn) chạy sau trên tập đã rút gọn.
+- `contradictedAssumptionCount`/`highPriorityOpenUnknowns` truyền vào
+  `gateStatusTransition()` ở cả hai nơi giờ tính từ danh sách ĐÃ CLUSTER —
+  nhất quán với dữ liệu thực sự được lưu vào session.
+
+**P2+ — `evidenceTopicallySupportsUnknown()` (cùng file):** `resolveUnknown()`
+action `RESOLVE_WITH_EVIDENCE` trước đây chỉ đòi evidence tồn tại +
+`verificationStatus === "VERIFIED"`, không kiểm tra evidence đó có LIÊN
+QUAN tới câu hỏi đang đóng hay không — một evidence VERIFIED bất kỳ trong
+session (vd. "20 users × $15 = $300 MRR") có thể đóng nhầm một Unknown
+không liên quan (vd. "Mega 6/45 draws có độc lập không?"). Fix: evidence
+phải HOẶC được gắn tường minh `supportsUnknownIds` chứa đúng `unknown.id`,
+HOẶC chia sẻ đủ content-token/Jaccard với `unknown.question`
+(`sharesContentTokens`, không phải NLP stack — cùng nguyên lý conservative
+như cluster ở trên). Không đạt → `resolveUnknown` từ chối, giữ nguyên
+resolution cũ, trả lý do rõ ràng.
+
+**Dual-Agent Cross-Consensus Judge / BiasMetric — cố ý KHÔNG làm:** đã
+đánh giá và từ chối tường minh (chi tiết đầy đủ trong report). Tóm tắt:
+trùng lớp với SecondOpinion (DeepSeek, mù) + `Judge.secondOpinionAgreement`
++ `deriveAgentAgreement()` đã có từ P0-02
+([[second-opinion-agreement-semantics]]); thêm judge thứ hai có nguy cơ
+"fake consensus" nếu cùng nhà cung cấp/fallback cùng model; đốt thêm
+1-2 LLM call/tick DEEP mà không có bằng chứng runtime nào cho thấy P0-02
+còn lỗ hổng; vi phạm ràng buộc cứng "không thêm LLM pass chấm fairness lên
+JudgeDraft" đã nêu trong chính brief được duyệt.
+
+**Không làm thêm (có chủ đích):** không persist "sau mỗi stage" một cách
+mù quáng — FRAME là stage duy nhất cùng tick với LLM call billed cần bảo
+vệ (đã early-persist ở [[parallel-frame-early-persist]]); không thêm UI
+"gợi ý merge" cho người dùng duyệt — merge máy conservative (ngưỡng 0.8 +
+fail-safe HIGH) đủ đáp ứng yêu cầu, thêm UI review sẽ là mở rộng phạm vi
+không có bằng chứng cần thiết; không deploy Firestore rules (P0-B — vẫn
+là blocker IAM ngoài repo, xem mục Nợ kỹ thuật); không rewrite
+LangGraph/event-sourced orchestrator (auto-workflow resume qua
+`workflow.completedStages` + Firestore `runTransaction` đã đủ, xem
+[[firestore-atomic-writes]]).
+
+**Test:** `src/tests/unit/entity-cluster.test.ts` (13 test) — Jaccard
+ngưỡng đúng trên paraphrase thật/câu không liên quan; cluster 20
+near-dup HIGH OPEN unknown collapse còn ≤2 item nhưng vẫn blocking; HIGH
+OPEN không bao giờ bị nuốt vào RESOLVED near-dup dù đứng cạnh nhau;
+importance=max khi HIGH+MEDIUM merge; CONTRADICTED không bao giờ mất khi
+merge với SUPPORTED; UNVERIFIED không tự nâng SUPPORTED;
+`applyAnalystState`/`applyParallelFrameState` cluster đúng và vẫn chặn
+DECISION_READY khi còn HIGH; `evidenceTopicallySupportsUnknown` accept
+link tường minh + token overlap, reject evidence không liên quan.
+`src/tests/unit/unknown-policy.test.ts` (+1 test P2+). Toàn bộ 226 test
+(28 file) + `tsc --noEmit` pass.
+
+**Chưa xác nhận qua MCP browser sống (khai báo tường minh, không bịa):**
+dev server chạy được (`pnpm dev`, Ready 4.6s) nhưng cookie/token trong
+phiên MCP browser đã hết hạn — `GET /api/workspaces` trả 401 "Invalid
+authentication token" ở cả trang chủ lẫn session Mega 6/45 cũ
+(`/sessions/DCBcWXlvv4YPj8w8smAm`). P2/Soft-Gate/no-Dual-Judge chỉ được
+xác nhận qua unit + integration test (scripted providers), CHƯA qua
+Gemini/Groq/DeepSeek thật trong phiên này — không tuyên bố đã verify
+sống. P0-B (deploy rules) vẫn mở, cùng lý do IAM đã ghi ở mục Nợ kỹ
+thuật.

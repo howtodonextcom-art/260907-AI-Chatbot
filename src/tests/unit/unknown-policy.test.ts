@@ -145,7 +145,10 @@ describe("resolveUnknown (v13 §8-9)", () => {
   });
 
   it("accepts RESOLVE_WITH_EVIDENCE with real VERIFIED evidence and records provenance", () => {
-    const ev = verifiedEvidence();
+    const ev = verifiedEvidence({
+      claim: "Product decision: use MT4/MT5 file upload for v1, API later.",
+      supportsUnknownIds: ["u1"],
+    });
     const result = resolveUnknown(
       unknown(),
       { kind: "RESOLVE_WITH_EVIDENCE", evidenceIds: [ev.id] },
@@ -157,6 +160,20 @@ describe("resolveUnknown (v13 §8-9)", () => {
     expect(result.unknown.resolvedBy).toBe("owner-1");
     expect(result.unknown.resolvedAt).toBe("2026-09-08T00:00:00.000Z");
     expect(isUnknownBlocking(result.unknown)).toBe(false);
+  });
+
+  it("rejects RESOLVE_WITH_EVIDENCE when VERIFIED evidence is topically unrelated (P2+)", () => {
+    const ev = verifiedEvidence({
+      claim: "20 users x $15 = $300 MRR",
+    });
+    const result = resolveUnknown(
+      unknown(),
+      { kind: "RESOLVE_WITH_EVIDENCE", evidenceIds: [ev.id] },
+      ctx([ev])
+    );
+    expect(result.applied).toBe(false);
+    expect(result.unknown.resolution).toBe("OPEN");
+    expect(result.reason).toMatch(/topically support/);
   });
 
   it("rejects empty resolution note for HUMAN_DECISION", () => {
